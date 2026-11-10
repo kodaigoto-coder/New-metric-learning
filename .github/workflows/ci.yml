@@ -1,0 +1,44 @@
+name: CI (Lint, Unit Tests & Docker Build)
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  test-and-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install Trainer & Backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ./trainer[dev]
+          pip install -e ./backend[dev]
+
+      - name: Run Ruff Linter
+        run: |
+          ruff check trainer/app backend/app frontend/app
+
+      - name: Run Trainer Core ML Unit Tests
+        working-directory: ./trainer
+        run: |
+          pytest tests/ -v
+
+      - name: Run Backend API Gateway Tests
+        working-directory: ./backend
+        run: |
+          pytest tests/ -v
+
+      - name: Validate Docker Compose Configuration
+        run: |
+          docker compose config -q

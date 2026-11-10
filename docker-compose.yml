@@ -1,0 +1,70 @@
+services:
+  trainer-service:
+    build:
+      context: ./trainer
+      dockerfile: Dockerfile
+    container_name: metric-trainer-service
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "18001", "--workers", "1"]
+    environment:
+      - DATA_DIR=/app/data
+      - DEFAULT_BACKBONE=${DEFAULT_BACKBONE:-efficientnet_b3}
+      - DEFAULT_POOLING=${DEFAULT_POOLING:-gem}
+      - EMBEDDING_DIM=${EMBEDDING_DIM:-128}
+      - DEVICE=${DEVICE:-cpu}
+    volumes:
+      - ./data:/app/data
+      - ./trainer/app:/app/app
+    ports:
+      - "18001:18001"
+    mem_limit: 6g
+    shm_size: "1gb"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:18001/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  api-backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: metric-api-backend
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "18000"]
+    environment:
+      - DATA_DIR=/app/data
+      - TRAINER_API_URL=http://trainer-service:18001
+    volumes:
+      - ./data:/app/data
+      - ./backend/app:/app/app
+    ports:
+      - "18000:18000"
+    mem_limit: 1g
+    depends_on:
+      trainer-service:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:18000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: metric-frontend
+    command: ["streamlit", "run", "app/main.py", "--server.address=0.0.0.0", "--server.port=18501", "--server.headless=true"]
+    environment:
+      - BACKEND_API_URL=http://api-backend:18000
+    volumes:
+      - ./data:/app/data
+      - ./frontend/app:/app/app
+    ports:
+      - "18501:18501"
+    mem_limit: 1g
+    depends_on:
+      api-backend:
+        condition: service_healthy
+    restart: unless-stopped

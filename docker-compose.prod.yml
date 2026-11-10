@@ -1,0 +1,13 @@
+services:
+  trainer-service:
+    image: ${GCP_REGION:-us-central1}-docker.pkg.dev/${GCP_PROJECT_ID}/metric-learning/trainer-service:${IMAGE_TAG:-latest}
+    volumes:
+      - /mnt/disks/appdata:/app/data
+
+  api-backend:
+    image: ${GCP_REGION:-us-central1}-docker.pkg.dev/${GCP_PROJECT_ID}/metric-learning/api-backend:${IMAGE_TAG:-latest}
+    volumes:
+      - /mnt/disks/appdata:/app/data
+
+  frontend:
+    image: ${GCP_REGION:-us-central1}-docker.pkg.dev/${GCP_PROJECT_ID}/metric-learning/frontend:${IMAGE_TAG:-latest}

@@ -1,0 +1,64 @@
+name: CD to GCE (Artifact Registry + Terraform + Docker Compose)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy-gce:
+    runs-on: ubuntu-latest
+    env:
+      GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+      GCP_REGION: ${{ secrets.GCP_REGION }}
+      GCE_INSTANCE_NAME: ${{ secrets.GCE_INSTANCE_NAME }}
+      GCE_ZONE: ${{ secrets.GCE_ZONE }}
+      IMAGE_TAG: ${{ github.sha }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud via Workload Identity
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK & Docker Auth
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Configure Docker for Artifact Registry
+        run: |
+          gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
+
+      - name: Build and Push 3 Container Images (trainer-service, api-backend, frontend)
+        run: |
+          REGISTRY="${GCP_REGION}-docker.pkg.dev/${GCP_PROJECT_ID}/metric-learning"
+          docker build -t "${REGISTRY}/trainer-service:${IMAGE_TAG}" -t "${REGISTRY}/trainer-service:latest" ./trainer
+          docker build -t "${REGISTRY}/api-backend:${IMAGE_TAG}" -t "${REGISTRY}/api-backend:latest" ./backend
+          docker build -t "${REGISTRY}/frontend:${IMAGE_TAG}" -t "${REGISTRY}/frontend:latest" ./frontend
+          docker push "${REGISTRY}/trainer-service:${IMAGE_TAG}"
+          docker push "${REGISTRY}/trainer-service:latest"
+          docker push "${REGISTRY}/api-backend:${IMAGE_TAG}"
+          docker push "${REGISTRY}/api-backend:latest"
+          docker push "${REGISTRY}/frontend:${IMAGE_TAG}"
+          docker push "${REGISTRY}/frontend:latest"
+
+      - name: Sync Docker Compose Manifests to GCE via IAP
+        run: |
+          gcloud compute scp --tunnel-through-iap \
+            docker-compose.yml docker-compose.prod.yml \
+            "${GCE_INSTANCE_NAME}:/opt/metric-learning/" \
+            --zone="${GCE_ZONE}"
+
+      - name: Pull Images & Restart Containers on GCE (Protecting Active Jobs)
+        run: |
+          gcloud compute ssh "${GCE_INSTANCE_NAME}" \
+            --zone="${GCE_ZONE}" \
+            --tunnel-through-iap \
+            --command="cd /opt/metric-learning && gcloud auth configure-docker ${GCP_REGION}-docker.pkg.dev --quiet && GCP_PROJECT_ID=${GCP_PROJECT_ID} GCP_REGION=${GCP_REGION} IMAGE_TAG=${IMAGE_TAG} docker compose -f docker-compose.yml -f docker-compose.prod.yml pull && GCP_PROJECT_ID=${GCP_PROJECT_ID} GCP_REGION=${GCP_REGION} IMAGE_TAG=${IMAGE_TAG} docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --remove-orphans && docker image prune -f"

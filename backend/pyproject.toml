@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "metric-learning-backend"
+version = "0.1.0"
+description = "Lightweight FastAPI Gateway for Dataset/Annotation Management, Job Proxying, and Dynamic Threshold Evaluation"
+readme = "../README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.27.0",
+    "pydantic>=2.6.0",
+    "numpy>=1.26.0",
+    "httpx>=0.27.0",
+    "Pillow>=10.2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.3.0",
+]
