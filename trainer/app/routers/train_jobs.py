@@ -275,6 +275,11 @@ def _execute_training_task(
         "best_val_recall": 0.0,
         "best_val_f1": 0.0,
         "best_val_precision": 0.0,
+        "best_val_accuracy": 0.0,
+        "best_test_recall": 0.0,
+        "best_test_f1": 0.0,
+        "best_test_precision": 0.0,
+        "best_test_accuracy": 0.0,
         "best_d_min_boundary": 0.0,
         "best_d_min_centroid": 0.0,
         "config": req.model_dump(),
@@ -304,15 +309,55 @@ def _execute_training_task(
         if len(items) < 4:
             raise ValueError("At least 4 annotated samples are required for Phase 2 training.")
 
+        # Ensure 6:2:2 (train:val:test = 60%:20%:20%) stratified split if legacy 2-split manifest is loaded
+        if not any(str(it.get("split")) == "test" for it in items) and len(items) >= 6:
+            rng_split = np.random.default_rng(42)
+            by_lbl: dict[str, list[int]] = {}
+            for idx_i, it in enumerate(items):
+                by_lbl.setdefault(str(it.get("label_name", "normal")), []).append(idx_i)
+            sp_counts: dict[str, int] = {"train": 0, "val": 0, "test": 0}
+            for _l_name, idxs in by_lbl.items():
+                arr = list(idxs)
+                rng_split.shuffle(arr)
+                n_c = len(arr)
+                if n_c >= 3:
+                    n_v = max(1, int(round(n_c * 0.20)))
+                    n_t = max(1, int(round(n_c * 0.20)))
+                    if n_v + n_t >= n_c:
+                        n_v, n_t = 1, 1
+                    n_tr = max(1, n_c - n_v - n_t)
+                    for p_i in arr[:n_tr]:
+                        items[p_i]["split"] = "train"
+                    for p_i in arr[n_tr : n_tr + n_v]:
+                        items[p_i]["split"] = "val"
+                    for p_i in arr[n_tr + n_v :]:
+                        items[p_i]["split"] = "test"
+                elif n_c == 2:
+                    items[arr[0]]["split"] = "train"
+                    items[arr[1]]["split"] = "test"
+                elif n_c == 1:
+                    items[arr[0]]["split"] = "train"
+            for it in items:
+                sp = str(it.get("split", "train"))
+                sp_counts[sp] = sp_counts.get(sp, 0) + 1
+            ann_data["split_counts"] = sp_counts
+            ann_data["split_ratios"] = {"train": 0.60, "val": 0.20, "test": 0.20}
+            tmp_ann = ann_path.with_suffix(".json.tmp")
+            tmp_ann.write_text(json.dumps(ann_data, ensure_ascii=False, indent=2), encoding="utf-8")
+            os.replace(tmp_ann, ann_path)
+
         image_paths = [str(item["image_path"]) for item in items]
         labels = np.array([int(item["label_id"]) for item in items], dtype=np.int64)
         label_names = [str(item["label_name"]) for item in items]
         is_defect = np.array([bool(item["is_defect"]) for item in items], dtype=bool)
         splits = [str(item.get("split", "train")) for item in items]
+        train_mask_np = np.array([s == "train" for s in splits], dtype=bool)
+        val_mask_np = np.array([s == "val" for s in splits], dtype=bool)
 
         num_defect_classes = max(1, int(np.max(labels)) if len(labels) > 0 else 1)
+        cb_source_labels = labels[train_mask_np] if np.any(train_mask_np) else labels
         cb_weights = compute_class_balanced_weights(
-            labels=labels,
+            labels=cb_source_labels,
             num_defect_classes=num_defect_classes,
             beta=req.class_balance_beta,
         )
@@ -376,6 +421,7 @@ def _execute_training_task(
             top_k_final=req.top_k_final,
             gamma_initial=req.gamma_initial,
             gamma_final=req.gamma_final,
+            base_normal_ratio=req.normal_loss_ratio,
         )
         memory_bank = CrossBatchMemoryBank(embedding_dim=TrainerConfig.EMBEDDING_DIM)
         nab_sampler = NormalAnomalyBalancedSampler(
@@ -396,7 +442,7 @@ def _execute_training_task(
         _update_job(
             job_id,
             progress=0.05,
-            message=f"[Session #{session_number:04d} | {ds_name}] Extracting & calibrating baseline feature statistics for {len(image_paths)} images...",
+            message=f"[Session #{session_number:04d} | {ds_name}] Extracting & calibrating baseline feature statistics strictly on train split...",
         )
         raw_all = extract_raw_uncalibrated_features(
             image_paths=image_paths,
@@ -404,17 +450,26 @@ def _execute_training_task(
             device=device,
             batch_size=req.batch_size,
         )
-        model.calibrate_feature_stats(raw_all)
+        # Strict data hygiene: calibrate feature mean/std and initialize proxies ONLY on `train` split (60%)
+        raw_train_only = raw_all[train_mask_np] if np.any(train_mask_np) else raw_all
+        model.calibrate_feature_stats(raw_train_only)
         with torch.no_grad():
             cached_gap_tensor = model.standardize_features(
                 torch.from_numpy(raw_all).to(device=device, dtype=torch.float32)
             )
             init_z = model.forward_from_gap_features(cached_gap_tensor)
             if proxy_criterion is not None:
-                proxy_criterion.initialize_proxies_from_embeddings(
-                    embeddings=init_z,
-                    labels=labels,
-                )
+                if np.any(train_mask_np):
+                    train_idx_t = torch.tensor(np.where(train_mask_np)[0], dtype=torch.long, device=device)
+                    proxy_criterion.initialize_proxies_from_embeddings(
+                        embeddings=init_z[train_idx_t],
+                        labels=labels[train_mask_np],
+                    )
+                else:
+                    proxy_criterion.initialize_proxies_from_embeddings(
+                        embeddings=init_z,
+                        labels=labels,
+                    )
 
         cached_gap_np = cached_gap_tensor.detach().cpu().numpy().astype(np.float32)
         use_cached_backbone = bool(req.freeze_backbone and not req.unfreeze_last_block)
@@ -551,7 +606,7 @@ def _execute_training_task(
                         repel_margin=req.repel_delta,
                         top_k_mode=curr_state.top_k_mode,
                         top_k_value=curr_state.top_k_value,
-                        normal_loss_ratio=req.normal_loss_ratio,
+                        normal_loss_ratio=curr_state.effective_normal_ratio,
                     )
                 else:
                     assert ms_criterion is not None
@@ -614,6 +669,45 @@ def _execute_training_task(
                 float(np.mean(epoch_centripetal_losses)) if epoch_centripetal_losses else 0.0
             )
             mean_repel = float(np.mean(epoch_repel_losses)) if epoch_repel_losses else 0.0
+
+            # Compute validation loss on the `val` (20%) split to guide the next epoch's Loss direction
+            val_loss_val = 0.0
+            val_loss_cent = 0.0
+            val_loss_rep = 0.0
+            if np.any(val_mask_np):
+                with torch.no_grad():
+                    z_val_t = torch.from_numpy(z_all[val_mask_np]).to(device=device, dtype=torch.float32)
+                    y_val_t = torch.from_numpy(labels[val_mask_np]).to(device=device, dtype=torch.long)
+                    if proxy_criterion is not None:
+                        _, val_l_stats = proxy_criterion(
+                            embeddings=z_val_t,
+                            labels=y_val_t,
+                            synth_embeddings=None,
+                            synth_labels=None,
+                            memory_bank=None,
+                            gamma_repel=curr_state.gamma_repel,
+                            repel_margin=req.repel_delta,
+                            top_k_mode=curr_state.top_k_mode,
+                            top_k_value=curr_state.top_k_value,
+                            normal_loss_ratio=curr_state.effective_normal_ratio,
+                        )
+                        val_loss_val = float(val_l_stats.get("loss_total", 0.0))
+                        val_loss_cent = float(val_l_stats.get("loss_centripetal", 0.0))
+                        val_loss_rep = float(val_l_stats.get("loss_repel", 0.0))
+                    elif ms_criterion is not None:
+                        _, val_l_stats = ms_criterion(
+                            embeddings=z_val_t,
+                            labels=y_val_t,
+                            memory_bank=None,
+                            gamma_repel=curr_state.gamma_repel,
+                            repel_margin=curr_state.repel_margin,
+                            top_k_mode=curr_state.top_k_mode,
+                            top_k_value=curr_state.top_k_value,
+                        )
+                        val_loss_val = float(val_l_stats.get("loss_total", 0.0))
+                        val_loss_cent = float(val_l_stats.get("loss_ms", 0.0))
+                        val_loss_rep = float(val_l_stats.get("loss_repel", 0.0))
+
             is_milestone = (
                 epoch == 1
                 or epoch == req.epochs
@@ -633,6 +727,9 @@ def _execute_training_task(
                 artifacts_dir=session_dir,
                 tau_sim=req.tau_sim,
                 train_loss=mean_loss,
+                val_loss=val_loss_val,
+                loss_direction_feedback=curr_state.loss_direction_feedback,
+                effective_normal_ratio=curr_state.effective_normal_ratio,
                 curriculum_progress=curr_state.progress,
                 effective_top_k=last_k_eff,
                 save_full_snapshot=is_milestone,
@@ -648,11 +745,25 @@ def _execute_training_task(
             val_recall = float(eval_res["val_metrics"]["recall"])
             val_f1 = float(eval_res["val_metrics"]["f1"])
             val_precision = float(eval_res["val_metrics"]["precision"])
+            val_accuracy = float(eval_res["val_metrics"]["accuracy"])
+
+            test_recall = float(eval_res["test_metrics"]["recall"])
+            test_f1 = float(eval_res["test_metrics"]["f1"])
+            test_precision = float(eval_res["test_metrics"]["precision"])
+            test_accuracy = float(eval_res["test_metrics"]["accuracy"])
+
+            train_recall = float(eval_res["train_metrics"]["recall"])
+            train_f1 = float(eval_res["train_metrics"]["f1"])
+            train_accuracy = float(eval_res["train_metrics"]["accuracy"])
+
             d_min_boundary = float(eval_res["d_min_boundary"])
             d_min_centroid = float(eval_res["d_min_centroid"])
+            test_d_min_boundary = float(eval_res.get("test_d_min_boundary", d_min_boundary))
+            test_d_min_centroid = float(eval_res.get("test_d_min_centroid", d_min_centroid))
             disp_m = eval_res.get("dispersion_metrics", {})
 
-            composite_quality = val_recall + 0.5 * val_f1 + 0.2 * d_min_boundary
+            # Best checkpoint selection strictly uses `val` split metrics (zero test leakage!)
+            composite_quality = val_recall + 0.5 * val_f1 + 0.3 * val_accuracy + 0.2 * d_min_boundary
             if composite_quality >= best_score:
                 best_score = composite_quality
                 ckpt_payload = {
@@ -678,28 +789,65 @@ def _execute_training_task(
                     "best_val_recall": val_recall,
                     "best_val_f1": val_f1,
                     "best_val_precision": val_precision,
+                    "best_val_accuracy": val_accuracy,
+                    "best_test_recall": test_recall,
+                    "best_test_f1": test_f1,
+                    "best_test_precision": test_precision,
+                    "best_test_accuracy": test_accuracy,
                     "best_d_min_boundary": d_min_boundary,
                     "best_d_min_centroid": d_min_centroid,
                 }
 
+            # Validation feedback -> Next Epoch's Loss direction & curriculum schedule
             next_state = scheduler.step(
                 epoch=epoch,
                 val_recall=val_recall,
                 d_min_boundary=d_min_boundary,
+                val_loss_centripetal=val_loss_cent,
+                val_loss_repel=val_loss_rep,
+                val_precision=val_precision,
             )
+
+            # Update saved `.pkl` snapshots with post-validation next-epoch feedback
+            for pkl_p_str in (eval_res["light_pkl_path"], eval_res["full_pkl_path"]):
+                if pkl_p_str:
+                    pkl_p = Path(pkl_p_str)
+                    if pkl_p.exists():
+                        with open(pkl_p, "rb") as pf:
+                            snap_obj = pickle.load(pf)
+                        snap_obj["loss_direction_feedback"] = str(next_state.loss_direction_feedback)
+                        snap_obj["effective_normal_ratio"] = round(float(next_state.effective_normal_ratio), 4)
+                        with open(pkl_p, "wb") as pf:
+                            pickle.dump(snap_obj, pf, protocol=pickle.HIGHEST_PROTOCOL)
+                        shutil.copy2(pkl_p, root_art_dir / pkl_p.name)
 
             epoch_record = {
                 "epoch": epoch,
                 "loss_type": req.loss_type,
                 "train_loss": round(mean_loss, 5),
+                "val_loss": round(val_loss_val, 5),
                 "loss_centripetal": round(mean_centripetal, 5),
                 "loss_repel": round(mean_repel, 5),
-                "normal_loss_ratio": round(float(req.normal_loss_ratio), 3),
+                "val_loss_centripetal": round(val_loss_cent, 5),
+                "val_loss_repel": round(val_loss_rep, 5),
+                "normal_loss_ratio": round(float(curr_state.effective_normal_ratio), 4),
+                "effective_normal_ratio": round(float(next_state.effective_normal_ratio), 4),
+                "loss_direction_feedback": next_state.loss_direction_feedback,
                 "val_recall": val_recall,
                 "val_precision": val_precision,
                 "val_f1": val_f1,
+                "val_accuracy": val_accuracy,
+                "test_recall": test_recall,
+                "test_precision": test_precision,
+                "test_f1": test_f1,
+                "test_accuracy": test_accuracy,
+                "train_recall": train_recall,
+                "train_f1": train_f1,
+                "train_accuracy": train_accuracy,
                 "d_min_boundary": d_min_boundary,
                 "d_min_centroid": d_min_centroid,
+                "test_d_min_boundary": test_d_min_boundary,
+                "test_d_min_centroid": test_d_min_centroid,
                 "normal_intra_disp": float(disp_m.get("normal_intra_disp", 0.0)),
                 "defect_intra_disp": float(disp_m.get("defect_intra_disp", 0.0)),
                 "inter_class_dist": float(disp_m.get("inter_class_dist", 0.0)),
@@ -733,8 +881,11 @@ def _execute_training_task(
                 progress=round(epoch / req.epochs, 4),
                 history=history,
                 message=(
-                    f"[Session #{session_number:04d} | {ds_name}] Epoch {epoch}/{req.epochs} [{req.loss_type}] | "
-                    f"Loss={mean_loss:.4f} | Recall={val_recall:.3f} | F1={val_f1:.3f} | d_min={d_min_boundary:.3f}"
+                    f"[Session #{session_number:04d} | {ds_name}] Ep {epoch}/{req.epochs} | "
+                    f"Loss={mean_loss:.4f} (Val={val_loss_val:.4f}) | "
+                    f"Val Acc={val_accuracy:.3f} F1={val_f1:.3f} | "
+                    f"Test Acc={test_accuracy:.3f} Recall={test_recall:.3f} F1={test_f1:.3f} | "
+                    f"次Ep方向: {curr_state.loss_direction_feedback}"
                 ),
             )
 

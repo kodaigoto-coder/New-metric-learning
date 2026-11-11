@@ -284,7 +284,8 @@ with st.expander(
         f"サブフォルダ内訳: `{sub_counts if sub_counts else '未登録'}` ｜ "
         f"確定済みアノテーション: "
         + (
-            f"**登録済 ({existing_ann['total_samples']}枚, 良品=`{existing_ann.get('normal_class_name')}`, 内訳={existing_ann.get('class_counts')})**"
+            f"**登録済 ({existing_ann['total_samples']}枚, 良品=`{existing_ann.get('normal_class_name')}`, "
+            f"内訳={existing_ann.get('class_counts')}, 6:2:2分割={existing_ann.get('split_counts', {})})**"
             if existing_ann
             else "**未確定**"
         )
@@ -485,13 +486,16 @@ with st.expander(
                     {
                         "dataset_name": active_dataset_name,
                         "normal_class_name": direct_norm_cls,
-                        "val_ratio": 0.25,
+                        "train_ratio": 0.60,
+                        "val_ratio": 0.20,
+                        "test_ratio": 0.20,
                         "seed": 42,
                     }
                 )
                 st.success(
                     f"サブフォルダ名から `{active_dataset_name}` のアノテーションを確定しました！"
-                    f"（全 {saved_sub['total_samples']} 枚 ｜ 良品=`{saved_sub['normal_class_name']}` ｜ 内訳={saved_sub['class_counts']}）"
+                    f"（全 {saved_sub['total_samples']} 枚 ｜ 良品=`{saved_sub['normal_class_name']}` ｜ "
+                    f"内訳={saved_sub['class_counts']} ｜ 6:2:2分割={saved_sub.get('split_counts', {})}）"
                 )
                 st.rerun()
 
@@ -831,13 +835,15 @@ else:
                 "sample_overrides": {},
                 "normal_class_name": normal_class_name,
                 "use_subfolder_labels": bool(use_subfolder_labels),
-                "val_ratio": 0.25,
+                "train_ratio": 0.60,
+                "val_ratio": 0.20,
+                "test_ratio": 0.20,
                 "seed": 42,
             }
         )
         st.success(
             f"データセット `{active_dataset_name}` のアノテーション確定完了（全 {saved['total_samples']} 件, 良品クラス=`{saved.get('normal_class_name', normal_class_name)}`）: "
-            f"学習クラス内訳 = {saved['class_counts']} ｜ クラスIDマップ = {saved['class_map']}"
+            f"学習クラス内訳 = {saved['class_counts']} ｜ 6:2:2分割 = {saved.get('split_counts', {})} ｜ クラスIDマップ = {saved['class_map']}"
         )
         st.rerun()
 
@@ -961,24 +967,29 @@ else:
                     "items": updated_rows,
                     "sync_raw_subfolders": bool(sync_sub_bulk),
                     "rebalance_splits": True,
-                    "val_ratio": 0.25,
+                    "train_ratio": 0.60,
+                    "val_ratio": 0.20,
+                    "test_ratio": 0.20,
                     "seed": 42,
                 }
             )
             st.success(
-                f"ラベル `{bulk_from}` → `{bulk_to}` の一括修正を保存しました！ 現在の内訳: {res_upd['class_counts']}"
+                f"ラベル `{bulk_from}` → `{bulk_to}` の一括修正を保存しました！ 現在の内訳: {res_upd['class_counts']} ｜ 6:2:2分割: {res_upd.get('split_counts', {})}"
             )
             st.rerun()
 
     with ed_top3:
-        st.markdown("**📊 現在のラベル内訳**")
+        st.markdown("**📊 現在のラベル・6:2:2分割内訳**")
         counts_series = df_edit_src["label_name"].value_counts()
         df_cnt_summary = pd.DataFrame(
             [
                 {
                     "クラス名 (label_name)": k,
                     "種別": "🟢 良品 (0)" if k == editor_norm_cls else "🔴 不良 (>0)",
-                    "枚数": int(v),
+                    "合計": int(v),
+                    "Train(6)": int(((df_edit_src["label_name"] == k) & (df_edit_src["split"] == "train")).sum()),
+                    "Val(2)": int(((df_edit_src["label_name"] == k) & (df_edit_src["split"] == "val")).sum()),
+                    "Test(2)": int(((df_edit_src["label_name"] == k) & (df_edit_src["split"] == "test")).sum()),
                 }
                 for k, v in counts_series.items()
             ]
@@ -986,7 +997,7 @@ else:
         st.dataframe(df_cnt_summary, use_container_width=True, hide_index=True, height=135)
 
     # Interactive Data Editor Table
-    st.markdown("##### 📋 個別画像のラベル・Train/Val分割 直接編集テーブル（セルをクリックして変更可能）")
+    st.markdown("##### 📋 個別画像のラベル・Train/Val/Test (6:2:2) 分割 直接編集テーブル（セルをクリックして変更可能）")
     edited_df = st.data_editor(
         df_edit_src[
             ["file_name", "current_subfolder", "cluster_id", "label_name", "split", "image_path"]
@@ -1002,9 +1013,10 @@ else:
                 help="クリックして任意のクラス名に変更できます。",
             ),
             "split": st.column_config.SelectboxColumn(
-                "データ分割 (split) ✏️",
-                options=["train", "val"],
+                "データ分割 (split: train/val/test) ✏️",
+                options=["train", "val", "test"],
                 required=True,
+                help="train (学習 60%), val (評価 20%: 次エポックのLoss方向性制御・ベスト選定), test (テスト 20%: 最終性能のカンニングなし評価)",
             ),
             "image_path": st.column_config.TextColumn("画像パス", disabled=True),
         },
@@ -1016,7 +1028,7 @@ else:
 
     save_c1, save_c2, save_c3 = st.columns([1.5, 1.5, 2.0])
     rebalance_chk = save_c1.checkbox(
-        "保存時に Train/Val 分割 (75%:25%) をクラス別に自動再計算する",
+        "保存時に Train/Val/Test 分割 (6:2:2 = 60%:20%:20%) をクラス別に自動再計算する",
         value=False,
         key=f"rebalance_chk_{active_dataset_name}",
     )
@@ -1035,7 +1047,7 @@ else:
                 "image_path": str(r["image_path"]),
                 "file_name": str(r["file_name"]),
                 "label_name": str(r["label_name"]),
-                "split": str(r["split"]) if str(r["split"]) in ("train", "val") else "train",
+                "split": str(r["split"]) if str(r["split"]) in ("train", "val", "test") else "train",
                 "cluster_id": int(r["cluster_id"]),
             }
             for r in edited_df.to_dict("records")
@@ -1047,11 +1059,14 @@ else:
                 "items": payload_items,
                 "sync_raw_subfolders": bool(sync_folders_chk),
                 "rebalance_splits": bool(rebalance_chk),
-                "val_ratio": 0.25,
+                "train_ratio": 0.60,
+                "val_ratio": 0.20,
+                "test_ratio": 0.20,
                 "seed": 42,
             }
         )
         st.success(
-            f"✅ 編集内容を保存しました！（全 {res_direct['total_samples']} 枚 ｜ 良品=`{res_direct['normal_class_name']}` ｜ クラス内訳={res_direct['class_counts']}）"
+            f"✅ 編集内容を保存しました！（全 {res_direct['total_samples']} 枚 ｜ 良品=`{res_direct['normal_class_name']}` ｜ "
+            f"クラス内訳={res_direct['class_counts']} ｜ 6:2:2分割={res_direct.get('split_counts', {})}）"
         )
         st.rerun()

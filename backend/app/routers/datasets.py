@@ -146,10 +146,12 @@ def _build_and_save_annotations_manifest(
     raw_items: list[dict[str, Any]],
     resolved_labels: list[str],
     normal_class_name: str,
-    val_ratio: float,
-    seed: int,
+    val_ratio: float = 0.20,
+    seed: int = 42,
+    train_ratio: float = 0.60,
+    test_ratio: float = 0.20,
 ) -> dict[str, Any]:
-    """Build deterministic `class_map` (normal_class_name -> 0, defects -> 1..C) and stratified splits."""
+    """Build deterministic `class_map` (normal_class_name -> 0, defects -> 1..C) and 6:2:2 stratified `train`/`val`/`test` splits."""
     norm_cls = normal_class_name.strip() or "normal"
     unique_all = sorted(set(resolved_labels))
     if norm_cls not in unique_all and "normal" in unique_all:
@@ -159,6 +161,11 @@ def _build_and_save_annotations_manifest(
     class_map: dict[str, int] = {norm_cls: 0}
     for idx, d_name in enumerate(unique_defect_names, start=1):
         class_map[d_name] = idx
+
+    total_r = max(1e-6, float(train_ratio) + float(val_ratio) + float(test_ratio))
+    r_train = float(train_ratio) / total_r
+    r_val = float(val_ratio) / total_r
+    r_test = float(test_ratio) / total_r
 
     rng = np.random.default_rng(seed)
     by_class: dict[str, list[int]] = {}
@@ -170,18 +177,35 @@ def _build_and_save_annotations_manifest(
         arr = list(indices)
         rng.shuffle(arr)
         n_cls = len(arr)
-        if n_cls >= 2:
-            n_val = max(1, min(n_cls - 1, int(round(n_cls * val_ratio))))
-            for val_idx in arr[:n_val]:
-                splits[val_idx] = "val"
+        if n_cls >= 3:
+            n_val = max(1, int(round(n_cls * r_val)))
+            n_test = max(1, int(round(n_cls * r_test)))
+            if n_val + n_test >= n_cls:
+                n_val = 1
+                n_test = 1
+            n_train = max(1, n_cls - n_val - n_test)
+            for idx_pos in arr[:n_train]:
+                splits[idx_pos] = "train"
+            for idx_pos in arr[n_train : n_train + n_val]:
+                splits[idx_pos] = "val"
+            for idx_pos in arr[n_train + n_val :]:
+                splits[idx_pos] = "test"
+        elif n_cls == 2:
+            splits[arr[0]] = "train"
+            splits[arr[1]] = "test"
+        elif n_cls == 1:
+            splits[arr[0]] = "train"
 
     annotated_items: list[dict[str, Any]] = []
     class_counts: dict[str, int] = {}
+    split_counts: dict[str, int] = {"train": 0, "val": 0, "test": 0}
     for i, item in enumerate(raw_items):
         lbl_name = resolved_labels[i]
         lbl_id = class_map.get(lbl_name, 0)
         is_def = lbl_id > 0
+        sp = splits[i]
         class_counts[lbl_name] = class_counts.get(lbl_name, 0) + 1
+        split_counts[sp] = split_counts.get(sp, 0) + 1
         annotated_items.append(
             {
                 "image_path": str(item["image_path"]),
@@ -190,7 +214,7 @@ def _build_and_save_annotations_manifest(
                 "label_name": lbl_name,
                 "label_id": int(lbl_id),
                 "is_defect": bool(is_def),
-                "split": splits[i],
+                "split": sp,
             }
         )
 
@@ -201,6 +225,12 @@ def _build_and_save_annotations_manifest(
         "normal_class_name": norm_cls,
         "class_map": class_map,
         "class_counts": class_counts,
+        "split_counts": split_counts,
+        "split_ratios": {
+            "train": round(r_train, 3),
+            "val": round(r_val, 3),
+            "test": round(r_test, 3),
+        },
         "items": annotated_items,
     }
 
@@ -380,7 +410,7 @@ def get_clustering_result(dataset_name: str | None = Query(default=None)) -> dic
 
 @router.get("/annotations")
 def get_annotations(dataset_name: str | None = Query(default=None)) -> dict[str, Any]:
-    """Return the confirmed pseudo-multiclass annotations (`annotations.json`)."""
+    """Return the confirmed pseudo-multiclass annotations (`annotations.json`), auto-upgrading legacy 2-split files to 6:2:2 (`train`/`val`/`test`)."""
     target_ds = (
         sanitize_identifier(dataset_name, fallback=BackendConfig.get_active_dataset())
         if dataset_name
@@ -392,7 +422,27 @@ def get_annotations(dataset_name: str | None = Query(default=None)) -> dict[str,
             status_code=404,
             detail=f"No annotations.json found for dataset `{target_ds}`. Confirm cluster labels in Phase 1 first.",
         )
-    return json.loads(ann_path.read_text(encoding="utf-8"))
+    data = json.loads(ann_path.read_text(encoding="utf-8"))
+    items = data.get("items", [])
+    has_test = any(str(it.get("split")) == "test" for it in items)
+    if not has_test and len(items) >= 6:
+        data = _build_and_save_annotations_manifest(
+            dataset_name=target_ds,
+            raw_items=items,
+            resolved_labels=[str(it.get("label_name", data.get("normal_class_name", "normal"))) for it in items],
+            normal_class_name=str(data.get("normal_class_name", "normal")),
+            train_ratio=0.60,
+            val_ratio=0.20,
+            test_ratio=0.20,
+            seed=42,
+        )
+    elif "split_counts" not in data:
+        sp_counts = {"train": 0, "val": 0, "test": 0}
+        for it in items:
+            sp = str(it.get("split", "train"))
+            sp_counts[sp] = sp_counts.get(sp, 0) + 1
+        data["split_counts"] = sp_counts
+    return data
 
 
 @router.post("/annotations")
@@ -464,7 +514,9 @@ def save_annotations(req: AnnotationSubmissionRequest) -> dict[str, Any]:
         raw_items=raw_items,
         resolved_labels=resolved_labels,
         normal_class_name=req.normal_class_name,
+        train_ratio=req.train_ratio,
         val_ratio=req.val_ratio,
+        test_ratio=req.test_ratio,
         seed=req.seed,
     )
 
@@ -513,7 +565,9 @@ def save_annotations_from_subfolders(req: DirectSubfolderAnnotationRequest) -> d
         raw_items=raw_items,
         resolved_labels=resolved_labels,
         normal_class_name=req.normal_class_name,
+        train_ratio=req.train_ratio,
         val_ratio=req.val_ratio,
+        test_ratio=req.test_ratio,
         seed=req.seed,
     )
 
@@ -611,7 +665,9 @@ def rename_or_merge_subfolder_class(
                 raw_items=raw_items,
                 resolved_labels=resolved_labels,
                 normal_class_name=norm_cls,
-                val_ratio=0.25,
+                train_ratio=0.60,
+                val_ratio=0.20,
+                test_ratio=0.20,
                 seed=42,
             )
         except Exception:
@@ -652,7 +708,9 @@ def delete_subfolder_class(dataset_name: str, class_name: str) -> dict[str, Any]
                     raw_items=kept_items,
                     resolved_labels=[str(it.get("label_name", norm_cls)) for it in kept_items],
                     normal_class_name=norm_cls,
-                    val_ratio=0.25,
+                    train_ratio=0.60,
+                    val_ratio=0.20,
+                    test_ratio=0.20,
                     seed=42,
                 )
             else:
@@ -707,7 +765,7 @@ def direct_update_annotations(req: DirectAnnotationsEditorRequest) -> dict[str, 
             }
         )
         resolved_labels.append(clean_lbl)
-        explicit_splits.append("val" if row.split == "val" else "train")
+        explicit_splits.append(row.split if row.split in ("train", "val", "test") else "train")
 
     # Clean up any empty subfolder directories left behind after moving files
     if req.sync_raw_subfolders and raw_dir.exists():
@@ -722,14 +780,19 @@ def direct_update_annotations(req: DirectAnnotationsEditorRequest) -> dict[str, 
         raw_items=updated_raw_items,
         resolved_labels=resolved_labels,
         normal_class_name=norm_cls,
+        train_ratio=req.train_ratio,
         val_ratio=req.val_ratio,
+        test_ratio=req.test_ratio,
         seed=req.seed,
     )
 
-    # If user did not request rebalancing splits, preserve the explicit train/val split from the table
+    # If user did not request rebalancing splits, preserve the explicit train/val/test split from the table
     if not req.rebalance_splits and len(manifest_payload["items"]) == len(explicit_splits):
+        sp_counts = {"train": 0, "val": 0, "test": 0}
         for i, sp in enumerate(explicit_splits):
             manifest_payload["items"][i]["split"] = sp
+            sp_counts[sp] = sp_counts.get(sp, 0) + 1
+        manifest_payload["split_counts"] = sp_counts
         ann_path = manifests_dir / "annotations.json"
         tmp_path = ann_path.with_suffix(".json.tmp")
         tmp_path.write_text(

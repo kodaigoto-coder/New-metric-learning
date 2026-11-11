@@ -192,8 +192,14 @@ class BackendApiClient:
             resp.raise_for_status()
             return resp.json()
 
-    def list_evaluations(self, session_id: str | None = None) -> dict[str, Any]:
-        params = {"session_id": session_id} if session_id else {}
+    def list_evaluations(
+        self,
+        session_id: str | None = None,
+        split: str = "test",
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"split": split}
+        if session_id:
+            params["session_id"] = session_id
         with httpx.Client(timeout=15.0) as client:
             resp = client.get(f"{self.base_url}/api/v1/evaluations", params=params)
             resp.raise_for_status()
@@ -204,8 +210,9 @@ class BackendApiClient:
         epoch: int,
         tau_sim: float = 0.0,
         session_id: str | None = None,
+        split: str = "test",
     ) -> dict[str, Any]:
-        params: dict[str, Any] = {"tau_sim": tau_sim}
+        params: dict[str, Any] = {"tau_sim": tau_sim, "split": split}
         if session_id:
             params["session_id"] = session_id
         with httpx.Client(timeout=30.0) as client:

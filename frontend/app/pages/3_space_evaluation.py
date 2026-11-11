@@ -170,7 +170,37 @@ def _trigger_popup_with_samples(samples: list[dict[str, Any]], title: str) -> No
     _open_image_inspector_dialog()
 
 
-st.title("Step 6：128次元空間 3軸多角評価・学習回数別分散推移 ＆ 画像ポップアップ検証")
+_STEP6_SERIES_TOOLTIPS: dict[str, str] = {
+    "accuracy": "正解率 Accuracy = (TP+TN)/(TP+TN+FP+FN)。良品・不良品の両方を正しく判定できた総合割合（1.0が満点）。",
+    "recall": "不良検出率（再現率）Recall = TP/(TP+FN)。実際の不良品のうち見逃さずにNG検出できた割合（1.0で見逃しゼロ）。",
+    "precision": "適合率 Precision = TP/(TP+FP)。NGと判定した画像のうち実際に不良品だった割合（1.0で良品過検出ゼロ）。",
+    "f1": "F1スコア = 2·Precision·Recall/(Precision+Recall)。見逃し防止(Recall)と過検出抑制(Precision)の調和平均。",
+    "良品クラスタ内分散 (σ²_norm)": "選択Split内の良品サンプルと良品プロキシ間の平均コサイン距離 1 - S(x_norm, p_norm)。0に近いほど良品が一点に凝集。",
+    "学習データ良品内分散 (Train σ²_norm)": "学習データ(Train 60%)の良品クラスタ内分散。学習したクラスタ分布の確からしさ・凝集度を確認する基準指標。",
+    "不良クラス内分散 (σ²_def)": "各不良サブクラス内の重心からの平均コサイン距離。小さいほど不良モードごとにまとまっています。",
+    "クラス間平均Cos距離 (D_inter)": "良品プロキシから不良サンプル群までの平均コサイン距離 1 - S(x_anom, p_norm)。大きいほど良品と不良が分離。",
+    "境界最小Cos距離 (d_min)": "(良品の最小類似度) - (不良の最大類似度)。0.0を超えると良品と不良の分布に重なりがゼロ（完全分離）。",
+    "空間分離比スコア J(t)": "フィッシャー空間分離比 D_inter / (σ²_norm + σ²_def)。大きいほど『クラス内は密・クラス間は遠い』理想的な特徴空間。",
+    "学習データ空間分離比 (Train J(t))": "学習データ(Train 60%)における空間分離比 J(t)。テストデータの分離比と比較して過学習の有無を確認できます。",
+    "3D UMAP 良品半径": "3D UMAP空間上での良品クラスタ重心からの二乗平均平方根(RMS)半径。",
+    "3D UMAP 不良半径": "3D UMAP空間上での不良クラスタ重心からの二乗平均平方根(RMS)半径。",
+}
+
+
+def _apply_step6_hover_tooltips(fig: Any, x_label: str = "Epoch") -> None:
+    """Attach explanatory Japanese tooltips to each trace in a Plotly line chart."""
+    for trace in fig.data:
+        series_name = str(getattr(trace, "name", ""))
+        desc = _STEP6_SERIES_TOOLTIPS.get(series_name, series_name)
+        trace.hovertemplate = (
+            f"<b>{series_name}</b><br>"
+            f"{x_label}: %{{x}}<br>"
+            "値 (Value): <b>%{y:.4f}</b><br>"
+            f"💡 <i>{desc}</i><extra></extra>"
+        )
+
+
+st.title("Step 6：128次元空間 3軸多角評価（6:2:2分割 テストデータ厳密評価・Accuracy・学習データの分散確認）")
 
 # Sidebar & Top Bar: Dataset + Training Session Selector (Enhancement 1 & 2)
 try:
@@ -188,8 +218,9 @@ if all_sessions:
         s["session_id"]: (
             f"Session #{s['session_number']:04d} ({s['session_id']}) ｜ "
             f"Dataset: {s.get('dataset_name', 'default')} ｜ "
-            f"Loss: {s.get('loss_type', '')} ｜ "
-            f"Best Recall={s.get('best_val_recall', 0.0):.3f}, F1={s.get('best_val_f1', 0.0):.3f}"
+            f"Test Acc={s.get('best_test_accuracy', s.get('best_val_accuracy', 0.0)):.3f}, "
+            f"Test Recall={s.get('best_test_recall', s.get('best_val_recall', 0.0)):.3f}, "
+            f"Val F1={s.get('best_val_f1', 0.0):.3f}"
         )
         for s in all_sessions
     }
@@ -242,12 +273,48 @@ if all_sessions:
                 f"**呼び出し中**: `Session #{selected_session_meta.get('session_number', 1):04d}` ｜ "
                 f"データセット: `{selected_session_meta.get('dataset_name', 'default')}` ｜ "
                 f"Best Epoch: `{selected_session_meta.get('best_epoch', 1)}` "
-                f"(Recall `{selected_session_meta.get('best_val_recall', 0.0):.3f}`, "
-                f"F1 `{selected_session_meta.get('best_val_f1', 0.0):.3f}`)"
+                f"(Test Acc `{selected_session_meta.get('best_test_accuracy', selected_session_meta.get('best_val_accuracy', 0.0)):.3f}`, "
+                f"Test Recall `{selected_session_meta.get('best_test_recall', selected_session_meta.get('best_val_recall', 0.0)):.3f}`)"
             )
 
+# Split Selector (6:2:2 -> Test 20% default, Val 20%, Train 60%, All 100%)
+SPLIT_LABELS_MAP: dict[str, str] = {
+    "test": "🧪 テストデータのみ (test: 20%) — 学習・制御に未使用の最終性能評価【デフォルト・カンニングなし】",
+    "val": "📋 評価データのみ (val: 20%) — エポック毎のLoss方向性フィードバック・Bestモデル選定用",
+    "train": "🏋️ 学習データのみ (train: 60%) — クラスタ分布の確からしさ・凝集分散の確認用",
+    "all": "🌐 全データ統合 (all: 100%) — Train(60%) + Val(20%) + Test(20%) 全体の空間俯瞰",
+}
+
+sp_bar_c1, sp_bar_c2 = st.columns([2.6, 1.4])
+with sp_bar_c1:
+    selected_split = st.selectbox(
+        "🎯 評価対象データ分割 (6:2:2 Split 切替 — 学習の良し悪しはテストデータ `test` で評価)",
+        options=["test", "val", "train", "all"],
+        index=0,
+        format_func=lambda sp: SPLIT_LABELS_MAP.get(sp, sp),
+        key="step6_split_selector",
+        help=(
+            "ディープラーニングの厳密評価のため、データは 学習(train 60%) : 評価(val 20%) : テスト(test 20%) に分割されています。"
+            "最終的な学習の良し悪しは『テストデータ (test: 20%)』で評価し、学習したクラスタ分布の確からしさ（分散の収縮）を確認したい場合は『学習データ (train: 60%)』に切り替えて確認できます。"
+        ),
+    )
+with sp_bar_c2:
+    with st.popover("ℹ️ 6:2:2 データ分割（学習・評価・テスト）の役割と評価ルール説明"):
+        st.markdown(
+            """
+            #### 📏 6 : 2 : 2 データ分割によるカンニングなし厳密評価
+            1. **🏋️ 学習データ (`train`: 60%)**
+               - モデルの重み更新・プロキシ更新・特徴量正規化統計量（平均・分散）の算出・初期K-Meansプロキシ初期化に**唯一使用されるデータ**です。
+               - Step 6 では**「学習によって形成されたクラスタ分布の確からしさ（良品クラスタ内分散 $\\sigma^2_{\\text{norm}}$ の収縮度合い）」**を確認する用途で使用します。
+            2. **📋 評価データ (`val`: 20%)**
+               - 各エポック終了時に `val_loss`（求心力Loss vs 斥力Loss）および `val_recall` / `val_precision` を算出し、**次のエポックのLoss方向性（求心力比率 $\\lambda_{\\text{norm}}$ の増減）とカリキュラムへフィードバック**します。また `best_model.pt` の選定基準となります。
+            3. **🧪 テストデータ (`test`: 20%)【デフォルト表示】**
+               - 学習にもエポック間のLoss方向性制御にも**一切使用していない完全未知データ**です。**最終的な学習の良し悪し（Accuracy / Recall / Precision / F1）はこのテストデータで評価**します。
+            """
+        )
+
 try:
-    eval_list = client.list_evaluations(session_id=selected_session_id)
+    eval_list = client.list_evaluations(session_id=selected_session_id, split=selected_split)
     epochs_meta: list[dict[str, Any]] = eval_list.get("epochs", [])
 except Exception as exc:
     epochs_meta = []
@@ -315,13 +382,36 @@ else:
         epoch=int(selected_epoch),
         tau_sim=float(tau_sim),
         session_id=selected_session_id,
+        split=selected_split,
     )
+    test_m = eval_data.get("test_metrics") or eval_data["val_metrics"]
     val_m = eval_data["val_metrics"]
+    train_m = eval_data.get("train_metrics") or eval_data["all_metrics"]
     all_m = eval_data["all_metrics"]
-    samples_list: list[dict[str, Any]] = eval_data["samples"]
+    active_m = eval_data.get("active_metrics") or (
+        test_m
+        if selected_split == "test"
+        else (val_m if selected_split == "val" else (train_m if selected_split == "train" else all_m))
+    )
+    split_counts_map: dict[str, int] = eval_data.get("split_counts") or {}
+    disp_by_split_map: dict[str, dict[str, Any]] = eval_data.get("dispersion_by_split") or {}
+
+    all_samples_list: list[dict[str, Any]] = eval_data["samples"]
+    if selected_split == "all":
+        samples_list = all_samples_list
+    else:
+        filtered_sp = [s for s in all_samples_list if s.get("split") == selected_split]
+        samples_list = filtered_sp if filtered_sp else all_samples_list
     df_samples = pd.DataFrame(samples_list)
 
-    # Group samples by Confusion Matrix category (TP, FN, FP, TN)
+    split_short_badge = {
+        "test": f"🧪 テストデータ (test: {len(samples_list)}枚 / 20%)",
+        "val": f"📋 評価データ (val: {len(samples_list)}枚 / 20%)",
+        "train": f"🏋️ 学習データ (train: {len(samples_list)}枚 / 60%)",
+        "all": f"🌐 全データ統合 (all: {len(samples_list)}枚 / 100%)",
+    }.get(selected_split, selected_split)
+
+    # Group samples in the active split by Confusion Matrix category (TP, FN, FP, TN)
     samples_by_cm: dict[str, list[dict[str, Any]]] = {
         "TP": [s for s in samples_list if s.get("cm_category") == "TP"],
         "FN": [s for s in samples_list if s.get("cm_category") == "FN"],
@@ -333,19 +423,100 @@ else:
     # SECTION 1: Quantitative High-Dimensional Cosine Margin & Interactive Confusion Matrix with Image Tooltips / Popup
     # =========================================================================
     st.subheader(
-        "1. 【最重要基準①】高次元定量的マージン ＆ 閾値連動 Recall / F1 スコア（混同行列画像ポップアップ確認付き）"
+        f"1. 【最重要基準①】高次元定量的マージン ＆ 閾値連動 Accuracy / Recall / F1 スコア（対象: {split_short_badge}）"
     )
-    k1, k2, k3, k4, k5, k6 = st.columns(6)
-    k1.metric("検証 Recall (再現率)", f"{val_m['recall']:.4f}", help="不良を見落とさなかった割合")
-    k2.metric("検証 F1 スコア", f"{val_m['f1']:.4f}")
-    k3.metric("検証 Precision", f"{val_m['precision']:.4f}")
-    k4.metric("全データ Recall", f"{all_m['recall']:.4f}")
-    k5.metric("境界良品〜不良 最小Cos距離", f"{eval_data['d_min_boundary']:.4f}")
-    k6.metric("良品中心〜不良 最小Cos距離", f"{eval_data['d_min_centroid']:.4f}")
+    k1, k2, k3, k4, k5, k6, k7 = st.columns(7)
+    k1.metric(
+        f"[{selected_split.upper()}] Accuracy (正解率)",
+        f"{float(active_m.get('accuracy', 0.0)):.4f}",
+        help="選択中のデータ分割(Split)における総合正解率 (TP+TN)/(TP+TN+FP+FN)。良品・不良品の両方を正しく判定できた割合です。",
+    )
+    k2.metric(
+        f"[{selected_split.upper()}] Recall (不良検出率)",
+        f"{float(active_m.get('recall', 0.0)):.4f}",
+        help="選択中のデータ分割(Split)における不良検出率 TP/(TP+FN)。実際の不良品を見逃さずNG検出できた割合です（1.0で見逃しゼロ）。",
+    )
+    k3.metric(
+        f"[{selected_split.upper()}] F1 スコア",
+        f"{float(active_m.get('f1', 0.0)):.4f}",
+        help="Recall(見逃し防止)とPrecision(過検出防止)の調和平均 2·P·R/(P+R)。",
+    )
+    k4.metric(
+        f"[{selected_split.upper()}] Precision (適合率)",
+        f"{float(active_m.get('precision', 0.0)):.4f}",
+        help="NGと判定したサンプルのうち実際に不良品だった割合 TP/(TP+FP)（1.0で過検出ゼロ）。",
+    )
+    k5.metric(
+        f"[{selected_split.upper()}] 境界最小距離 d_min",
+        f"{float(active_m.get('d_min_boundary', eval_data['d_min_boundary'])):.4f}",
+        help="(選択Split内の良品の最小類似度) - (不良の最大類似度)。0.0より大きければ良品と不良の分布に重なりがありません。",
+    )
+    k6.metric(
+        f"[{selected_split.upper()}] 中心間距離 d_cent",
+        f"{float(active_m.get('d_min_centroid', eval_data['d_min_centroid'])):.4f}",
+        help="1 - Mean(S(x_anom, p_norm))。良品プロキシから不良クラスタ重心までの平均コサイン距離（目標 ≥ 1.0）。",
+    )
+    k7.metric(
+        "Val→次Epoch 方向性制御",
+        str(eval_data.get("loss_direction_feedback", "balanced_hold")),
+        f"λ_norm比率={float(eval_data.get('effective_normal_ratio', 0.5)):.2f}",
+        help="評価データ(val 20%)のLoss・Recall/Precisionバランスから次のエポックへ返されたLoss方向性フィードバック（centripetal_focus=求心力強化 / repulsion_focus=斥力強化 / balanced_hold=均衡維持）。",
+    )
+
+    # 6:2:2 Split-by-Split Comparison Table (Test 20% vs Val 20% vs Train 60% vs All 100%)
+    with st.expander(
+        f"📊 6:2:2 分割別（Test 20% / Val 20% / Train 60% / All 100%）精度・クラスタ分散 比較サマリー (@ τ_sim={tau_sim:.2f})",
+        expanded=True,
+    ):
+        st.caption(
+            "💡 **学習の良し悪し（汎化性能）は『🧪 Test (20%)』の Accuracy / Recall / F1 で評価**し、"
+            "**形成されたクラスタ分布の確からしさ（良品が中心に鋭く凝集しているか）は『🏋️ Train (60%)』の良品内分散 $\\sigma^2_{\\text{norm}}$ と空間分離比 $J(t)$** で確認できます。"
+        )
+        split_summary_rows = []
+        for sp_key, sp_title, sp_m in [
+            ("test", "🧪 Test (20%: 最終性能評価・未知データ)", test_m),
+            ("val", "📋 Val (20%: 次Epoch方向性制御・モデル選定)", val_m),
+            ("train", "🏋️ Train (60%: 学習・クラスタ分布確からしさ確認)", train_m),
+            ("all", "🌐 All (100%: 全データ合計)", all_m),
+        ]:
+            sp_disp = disp_by_split_map.get(sp_key) or eval_data.get("dispersion_metrics", {})
+            split_summary_rows.append(
+                {
+                    "選択中": "👉 表示中" if sp_key == selected_split else "",
+                    "データ分割 (Split)": sp_title,
+                    "枚数": int(sp_m.get("sample_count", split_counts_map.get(sp_key, 0))),
+                    "Accuracy (正解率)": f"{float(sp_m.get('accuracy', 0.0)):.4f}",
+                    "Recall (不良検出率)": f"{float(sp_m.get('recall', 0.0)):.4f}",
+                    "Precision (適合率)": f"{float(sp_m.get('precision', 0.0)):.4f}",
+                    "F1 スコア": f"{float(sp_m.get('f1', 0.0)):.4f}",
+                    "TP / FN / FP / TN": f"{sp_m.get('tp', 0)} / {sp_m.get('fn', 0)} / {sp_m.get('fp', 0)} / {sp_m.get('tn', 0)}",
+                    "境界最小距離 d_min": f"{float(sp_m.get('d_min_boundary', 0.0)):.4f}",
+                    "良品内分散 σ²_norm": f"{float(sp_disp.get('normal_intra_disp', 0.0)):.4f}",
+                    "空間分離比 J(t)": f"{float(sp_disp.get('fisher_separation_ratio', 0.0)):.3f}",
+                }
+            )
+        st.dataframe(
+            pd.DataFrame(split_summary_rows),
+            use_container_width=True,
+            hide_index=True,
+            key="step6_split_comparison_df",
+        )
 
     cm_col, curve_col, hist_col = st.columns([1.25, 1.0, 1.0])
     with cm_col:
-        st.markdown(f"**混同行列（全データ @ $\\tau_{{\\text{{sim}}}} = {tau_sim:.2f}$ ｜ ホバーで内訳確認・ボタンで画像ポップアップ）**")
+        cm_hdr_c1, cm_hdr_c2 = st.columns([3.2, 0.8])
+        cm_hdr_c1.markdown(
+            f"**混同行列（{split_short_badge} @ $\\tau_{{\\text{{sim}}}} = {tau_sim:.2f}$）**"
+        )
+        with cm_hdr_c2.popover("ℹ️ 説明"):
+            st.markdown(
+                """
+                - **TP (左上)**: 実際の不良品を正しく `NG` と検出した枚数（多いほど良い）。
+                - **FN (右上)**: 実際の不良品を `OK` と見落とした枚数（**0枚が目標**）。
+                - **FP (左下)**: 実際の良品を `NG` と過検出した枚数（少ないほど良い）。
+                - **TN (右下)**: 実際の良品を正しく `OK` と合格判定した枚数（多いほど良い）。
+                """
+            )
 
         def _cm_tooltip_files(cat: str) -> str:
             arr = samples_by_cm.get(cat, [])
@@ -356,21 +527,21 @@ else:
             return "<br>".join(names) + more
 
         cm_z = [
-            [all_m["tp"], all_m["fn"]],
-            [all_m["fp"], all_m["tn"]],
+            [active_m["tp"], active_m["fn"]],
+            [active_m["fp"], active_m["tn"]],
         ]
         cm_text = [
-            [f"TP (不良検出)<br>{all_m['tp']} 枚", f"FN (不良見落とし)<br>{all_m['fn']} 枚"],
-            [f"FP (過検出)<br>{all_m['fp']} 枚", f"TN (正常合格)<br>{all_m['tn']} 枚"],
+            [f"TP (不良検出)<br>{active_m['tp']} 枚", f"FN (不良見落とし)<br>{active_m['fn']} 枚"],
+            [f"FP (過検出)<br>{active_m['fp']} 枚", f"TN (正常合格)<br>{active_m['tn']} 枚"],
         ]
         cm_hover = [
             [
-                f"<b>TP (不良を正しくNG検出): {all_m['tp']}枚</b><br>代表ファイル:<br>{_cm_tooltip_files('TP')}",
-                f"<b>FN (不良の見落とし): {all_m['fn']}枚</b><br>代表ファイル:<br>{_cm_tooltip_files('FN')}",
+                f"<b>[{selected_split.upper()}] TP (不良を正しくNG検出): {active_m['tp']}枚</b><br>💡 実不良で s(x) &lt; τ_sim のサンプル<br>代表ファイル:<br>{_cm_tooltip_files('TP')}",
+                f"<b>[{selected_split.upper()}] FN (不良の見落とし): {active_m['fn']}枚</b><br>💡 実不良なのに s(x) ≥ τ_sim となった要注意サンプル<br>代表ファイル:<br>{_cm_tooltip_files('FN')}",
             ],
             [
-                f"<b>FP (良品の過検出): {all_m['fp']}枚</b><br>代表ファイル:<br>{_cm_tooltip_files('FP')}",
-                f"<b>TN (良品を正しくOK判定): {all_m['tn']}枚</b><br>代表ファイル:<br>{_cm_tooltip_files('TN')}",
+                f"<b>[{selected_split.upper()}] FP (良品の過検出): {active_m['fp']}枚</b><br>💡 実良品なのに s(x) &lt; τ_sim となったサンプル<br>代表ファイル:<br>{_cm_tooltip_files('FP')}",
+                f"<b>[{selected_split.upper()}] TN (良品を正しくOK判定): {active_m['tn']}枚</b><br>💡 実良品で s(x) ≥ τ_sim のサンプル<br>代表ファイル:<br>{_cm_tooltip_files('TN')}",
             ],
         ]
         fig_cm = go.Figure(
@@ -393,55 +564,77 @@ else:
         )
         st.plotly_chart(fig_cm, use_container_width=True, key="eval_cm_heatmap_chart")
 
-        st.caption("👇 混同行列の各セルに該当する実画像をポップアップ（矢印送り対応）で確認:")
+        st.caption(f"👇 `{selected_split.upper()}` 混同行列の各セルに該当する実画像をポップアップ（矢印送り対応）で確認:")
         btn_tp, btn_fn, btn_fp, btn_tn = st.columns(4)
         if btn_tp.button(
-            f"🟢 TP ({all_m['tp']}枚)",
+            f"🟢 TP ({active_m['tp']}枚)",
             use_container_width=True,
             help="不良を正しくNG検出した画像をポップアップで確認します",
         ):
             _trigger_popup_with_samples(
-                samples_by_cm["TP"], f"混同行列 [TP: 不良検出] (Epoch {selected_epoch})"
+                samples_by_cm["TP"], f"[{selected_split.upper()}] 混同行列 [TP: 不良検出] (Epoch {selected_epoch})"
             )
         if btn_fn.button(
-            f"🔴 FN ({all_m['fn']}枚)",
+            f"🔴 FN ({active_m['fn']}枚)",
             use_container_width=True,
             help="不良を見落とした（OKと誤判定した）画像をポップアップで確認します",
         ):
             _trigger_popup_with_samples(
-                samples_by_cm["FN"], f"混同行列 [FN: 不良見落とし] (Epoch {selected_epoch})"
+                samples_by_cm["FN"], f"[{selected_split.upper()}] 混同行列 [FN: 不良見落とし] (Epoch {selected_epoch})"
             )
         if btn_fp.button(
-            f"🟠 FP ({all_m['fp']}枚)",
+            f"🟠 FP ({active_m['fp']}枚)",
             use_container_width=True,
             help="良品を過検出した（NGと誤判定した）画像をポップアップで確認します",
         ):
             _trigger_popup_with_samples(
-                samples_by_cm["FP"], f"混同行列 [FP: 良品過検出] (Epoch {selected_epoch})"
+                samples_by_cm["FP"], f"[{selected_split.upper()}] 混同行列 [FP: 良品過検出] (Epoch {selected_epoch})"
             )
         if btn_tn.button(
-            f"🔵 TN ({all_m['tn']}枚)",
+            f"🔵 TN ({active_m['tn']}枚)",
             use_container_width=True,
             help="良品を正しくOK合格とした画像をポップアップで確認します",
         ):
             _trigger_popup_with_samples(
-                samples_by_cm["TN"], f"混同行列 [TN: 正常合格] (Epoch {selected_epoch})"
+                samples_by_cm["TN"], f"[{selected_split.upper()}] 混同行列 [TN: 正常合格] (Epoch {selected_epoch})"
             )
 
     with curve_col:
+        with st.popover("ℹ️ 閾値 (τ_sim) 対 Accuracy/Recall/Precision/F1 曲線の説明 (Tooltip)"):
+            st.markdown(
+                """
+                - **横軸 (`tau_sim`)**: 判定閾値 $\\tau_{\\text{sim}}$。コサイン類似度 $s(x) < \\tau_{\\text{sim}}$ の画像を不良 (NG) と判定します。
+                - **`accuracy` (正解率)**: $(TP+TN)/N$。良品・不良品全体の正解率。
+                - **`recall` (不良検出率)**: $TP/(TP+FN)$。閾値 $\\tau_{\\text{sim}}$ を右（高め）に動かすほど見逃しが減り `1.0` に近づきます。
+                - **`precision` (適合率)**: $TP/(TP+FP)$。閾値 $\\tau_{\\text{sim}}$ を左（低め）に動かすほど良品の過検出が減り `1.0` に近づきます。
+                - **`f1` (F1スコア)**: Recall と Precision の両方が高いスイートスポット（山が最も高い位置）が最適閾値です。
+                """
+            )
         df_curve = pd.DataFrame(eval_data["threshold_curve"])
+        curve_y_cols = [
+            c for c in ["accuracy", "recall", "precision", "f1"] if c in df_curve.columns
+        ]
         fig_curve = px.line(
             df_curve,
             x="tau_sim",
-            y=["recall", "precision", "f1"],
-            title="コサイン類似度閾値 (τ_sim) 対 Recall / Precision / F1 曲線",
+            y=curve_y_cols,
+            title=f"[{selected_split.upper()}] 閾値 (τ_sim) 対 Accuracy / Recall / Precision / F1",
         )
+        _apply_step6_hover_tooltips(fig_curve, x_label="閾値 τ_sim")
         fig_curve.add_vline(
             x=float(tau_sim), line_dash="dash", line_color="red", annotation_text=f"τ={tau_sim:.2f}"
         )
         st.plotly_chart(fig_curve, use_container_width=True, key="eval_threshold_curve_chart")
 
     with hist_col:
+        with st.popover("ℹ️ コサイン類似度分布ヒストグラムの説明 (Tooltip)"):
+            st.markdown(
+                """
+                - **横軸 (`cosine_similarity`)**: 良品プロキシ $p_{\\text{norm}}$ とのコサイン類似度 $s(x) \\in [-1, 1]$。
+                - **右側の山 ($s(x) \\to +1.0$)**: 良品クラスタ。右端 `+1.0` 付近に狭く固まっているほど良品の分散が小さく優秀です。
+                - **左側の山 ($s(x) < \\tau_{\\text{sim}}$)**: 不良クラスタ。赤破線（判定閾値 $\\tau_{\\text{sim}}$）より左側に全ての不良サンプルが分離していれば見逃しゼロ・過検出ゼロを達成できます。
+                """
+            )
         fig_hist = px.histogram(
             df_samples,
             x="cosine_similarity",
@@ -449,7 +642,7 @@ else:
             nbins=30,
             barmode="overlay",
             hover_data=["file_name", "cm_category", "split"],
-            title="良品プロキシとのコサイン類似度分布 s(x) ∈ [-1, 1]",
+            title=f"[{selected_split.upper()}] 良品プロキシとのコサイン類似度分布 s(x) ∈ [-1, 1]",
         )
         fig_hist.add_vline(
             x=float(tau_sim), line_dash="dash", line_color="red", annotation_text=f"τ={tau_sim:.2f}"
@@ -462,25 +655,29 @@ else:
     # SECTION 2 (SWAPPED UP!): 128-D -> 3D UMAP Interactive Scatter Plot + Dispersion Evolution Across Epochs
     # =========================================================================
     st.subheader(
-        "2. 【最重要基準②】128次元 → 3D UMAP 立体散布図（学習済みプロキシ座標付き）＆ 学習回数（Epoch）に応じた分散推移"
+        f"2. 【最重要基準②】128次元 → 3D UMAP 立体散布図 ＆ 学習回数（Epoch）に応じた分散推移（選択中: {split_short_badge} ＋ 学習データ分散比較）"
     )
     st.caption(
-        "学習回数（Epoch）が進むにつれて、**良品クラスタ内分散（$\\sigma_{\\text{norm}}^2$）と各不良モード内分散（$\\sigma_{\\text{def}}^2$）がどのように収縮し、"
-        "良品〜不良間のクラス間距離（$D_{\\text{inter}}$）と空間分離比（$J(t)$）がどう拡大していくか**を定量指標と3D UMAPの両面で可視化します。"
+        "学習回数（Epoch）が進むにつれて、**選択中の評価分割（デフォルト `test` 20%）および学習データ（`train` 60%: クラスタ分布の確からしさ確認用）の"
+        "良品クラスタ内分散（$\\sigma_{\\text{norm}}^2$）がどのように収縮し、クラス間距離（$D_{\\text{inter}}$）と空間分離比（$J(t)$）がどう拡大していくか**を可視化します。"
     )
 
-    # Build Epoch-by-Epoch Dispersion History DataFrame from epochs_meta
+    # Build Epoch-by-Epoch Dispersion History DataFrame from epochs_meta (including Train 60% reference for cluster plausibility)
     disp_rows: list[dict[str, Any]] = []
     for ep_item in epochs_meta:
         dm = ep_item.get("dispersion_metrics", {})
+        dm_by_sp = ep_item.get("dispersion_by_split") or {}
+        dm_train = dm_by_sp.get("train", dm)
         disp_rows.append(
             {
                 "epoch": int(ep_item["epoch"]),
                 "良品クラスタ内分散 (σ²_norm)": float(dm.get("normal_intra_disp", 0.0)),
+                "学習データ良品内分散 (Train σ²_norm)": float(dm_train.get("normal_intra_disp", 0.0)),
                 "不良クラス内分散 (σ²_def)": float(dm.get("defect_intra_disp", 0.0)),
                 "クラス間平均Cos距離 (D_inter)": float(dm.get("inter_class_dist", 0.0)),
                 "境界最小Cos距離 (d_min)": float(ep_item.get("d_min_boundary", 0.0)),
                 "空間分離比スコア J(t)": float(dm.get("fisher_separation_ratio", 0.0)),
+                "学習データ空間分離比 (Train J(t))": float(dm_train.get("fisher_separation_ratio", 0.0)),
                 "3D UMAP 良品半径": float(dm.get("umap_normal_radius", 0.0)),
                 "3D UMAP 不良半径": float(dm.get("umap_defect_radius", 0.0)),
             }
@@ -488,12 +685,14 @@ else:
     df_disp_hist = pd.DataFrame(disp_rows)
 
     cur_disp: dict[str, Any] = eval_data.get("dispersion_metrics", {})
+    train_disp_now: dict[str, Any] = disp_by_split_map.get("train", cur_disp)
     ep1_disp: dict[str, Any] = epochs_meta[0].get("dispersion_metrics", {}) if epochs_meta else {}
 
-    # Dispersion KPI Cards with Delta vs Epoch 1
+    # Dispersion KPI Cards with Delta vs Epoch 1 + Train Cluster Dispersion Plausibility Card
     d_k1, d_k2, d_k3, d_k4, d_k5, d_k6 = st.columns(6)
     cur_norm_d = float(cur_disp.get("normal_intra_disp", 0.0))
     ep1_norm_d = float(ep1_disp.get("normal_intra_disp", cur_norm_d))
+    train_norm_d = float(train_disp_now.get("normal_intra_disp", 0.0))
     cur_def_d = float(cur_disp.get("defect_intra_disp", 0.0))
     ep1_def_d = float(ep1_disp.get("defect_intra_disp", cur_def_d))
     cur_inter_d = float(cur_disp.get("inter_class_dist", 0.0))
@@ -502,58 +701,72 @@ else:
     ep1_fisher = float(ep1_disp.get("fisher_separation_ratio", cur_fisher))
 
     d_k1.metric(
-        f"Epoch {selected_epoch} 良品内分散 (σ²_norm)",
+        f"[{selected_split.upper()}] 良品内分散 (σ²_norm)",
         f"{cur_norm_d:.4f}",
         delta=f"{cur_norm_d - ep1_norm_d:+.4f} (vs Ep1)",
         delta_color="inverse",
-        help="良品サンプルと良品プロキシ間の平均コサイン距離（小さいほど良品が密に凝集）",
+        help="選択Split内の良品サンプルと良品プロキシ間の平均コサイン距離（小さいほど良品が密に凝集）",
     )
     d_k2.metric(
-        f"Epoch {selected_epoch} 不良内分散 (σ²_def)",
+        "🏋️ 学習データ良品分散 (Train σ²_norm)",
+        f"{train_norm_d:.4f}",
+        delta=f"差 {cur_norm_d - train_norm_d:+.4f} (Test-Train)",
+        delta_color="off",
+        help="学習データ(Train 60%)の良品クラスタ内分散。学習で形成されたクラスタ分布の確からしさ・凝集度を確認できます。",
+    )
+    d_k3.metric(
+        f"[{selected_split.upper()}] 不良内分散 (σ²_def)",
         f"{cur_def_d:.4f}",
         delta=f"{cur_def_d - ep1_def_d:+.4f} (vs Ep1)",
         delta_color="inverse",
         help="各不良モード内の重心からの平均コサイン距離（小さいほど各不良モードが凝集）",
     )
-    d_k3.metric(
-        f"Epoch {selected_epoch} クラス間距離 (D_inter)",
+    d_k4.metric(
+        f"[{selected_split.upper()}] クラス間距離 (D_inter)",
         f"{cur_inter_d:.4f}",
         delta=f"{cur_inter_d - ep1_inter_d:+.4f} (vs Ep1)",
-        help="良品プロキシから全不良サンプルまでの平均コサイン距離（大きいほど良品と不良が分離）",
+        help="良品プロキシから不良サンプルまでの平均コサイン距離（大きいほど良品と不良が分離）",
     )
-    d_k4.metric(
-        f"Epoch {selected_epoch} 空間分離比 J(t)",
+    d_k5.metric(
+        f"[{selected_split.upper()}] 空間分離比 J(t)",
         f"{cur_fisher:.3f}",
         delta=f"{cur_fisher - ep1_fisher:+.3f} (vs Ep1)",
         help="J(t) = D_inter / (σ²_norm + σ²_def) — 大きいほどクラス内分散が小さくクラス間が離れている理想的な状態",
     )
-    d_k5.metric(
-        "3D UMAP 良品クラスタ半径",
-        f"{float(cur_disp.get('umap_normal_radius', 0.0)):.3f}",
-        help="3D UMAP空間上での良品群のRMS半径",
-    )
     d_k6.metric(
-        "3D UMAP 不良クラスタ半径",
-        f"{float(cur_disp.get('umap_defect_radius', 0.0)):.3f}",
-        help="3D UMAP空間上での不良群のRMS半径",
+        "3D UMAP 良品/不良 半径",
+        f"{float(cur_disp.get('umap_normal_radius', 0.0)):.2f} / {float(cur_disp.get('umap_defect_radius', 0.0)):.2f}",
+        help="3D UMAP空間上での良品群および不良群のRMS半径",
     )
 
-    # Epoch-by-Epoch Dispersion Evolution Charts
+    # Epoch-by-Epoch Dispersion Evolution Charts with Explanatory Tooltips
     if len(df_disp_hist) >= 1:
         ev_col1, ev_col2 = st.columns(2)
         with ev_col1:
+            with st.popover("ℹ️ クラスタ内分散・クラス間距離 推移グラフの項目説明 (Tooltip)"):
+                st.markdown(
+                    """
+                    - **`良品クラスタ内分散 (σ²_norm)`**: 選択中Split（デフォルト `test` 20%）の良品データのプロキシ周囲でのばらつき（**下がるほど良い**）。
+                    - **`学習データ良品内分散 (Train σ²_norm)`**: 学習データ (`train` 60%) の良品クラスタ内分散。**学習したクラスタ分布の確からしさ**を確認でき、`test` の分散と近い値で一緒に下がっていれば過学習なく健全に収縮しています。
+                    - **`不良クラス内分散 (σ²_def)`**: 各不良サブクラス内のばらつき（**下がるほど良い**）。
+                    - **`クラス間平均Cos距離 (D_inter)`**: 良品プロキシから不良群までの平均コサイン距離（**上がるほど良い、目標 $\\ge 1.0$**）。
+                    - **`境界最小Cos距離 (d_min)`**: 最も外側の良品と最も内側の不良のコサイン類似度差（**`0.0` を超えると完全分離**）。
+                    """
+                )
             fig_disp_curve = px.line(
                 df_disp_hist,
                 x="epoch",
                 y=[
                     "良品クラスタ内分散 (σ²_norm)",
+                    "学習データ良品内分散 (Train σ²_norm)",
                     "不良クラス内分散 (σ²_def)",
                     "クラス間平均Cos距離 (D_inter)",
                     "境界最小Cos距離 (d_min)",
                 ],
                 markers=True,
-                title="📈 学習回数 (Epoch) に伴うクラスタ内分散の収縮 ＆ クラス間距離の拡大",
+                title=f"📈 学習回数 (Epoch) に伴う分散収縮 ({selected_split.upper()} vs Train 60% 分布比較)",
             )
+            _apply_step6_hover_tooltips(fig_disp_curve, x_label="Epoch")
             fig_disp_curve.add_vline(
                 x=int(selected_epoch),
                 line_dash="dash",
@@ -564,13 +777,27 @@ else:
             st.plotly_chart(fig_disp_curve, use_container_width=True, key="eval_disp_evolution_chart")
 
         with ev_col2:
+            with st.popover("ℹ️ 空間分離比 J(t) ＆ 3D UMAP 半径推移グラフの項目説明 (Tooltip)"):
+                st.markdown(
+                    """
+                    - **`空間分離比スコア J(t)`**: フィッシャー判別比に基づく指標 $J(t) = \\frac{D_{\\text{inter}}}{\\sigma^2_{\\text{norm}} + \\sigma^2_{\\text{def}}}$。**値が高く右肩上がりであるほど、「良品は一点に凝集し、不良は遠くへ離れている」理想的な特徴空間**です。
+                    - **`学習データ空間分離比 (Train J(t))`**: 学習データ (`train` 60%) での空間分離比。テストデータの $J(t)$ と比較することで、クラスタ構造の汎化性を確認できます。
+                    - **`3D UMAP 良品半径` / `3D UMAP 不良半径`**: 3次元UMAP空間上での各クラスタの広がり（RMS半径）。
+                    """
+                )
             fig_sep_curve = px.line(
                 df_disp_hist,
                 x="epoch",
-                y=["空間分離比スコア J(t)", "3D UMAP 良品半径", "3D UMAP 不良半径"],
+                y=[
+                    "空間分離比スコア J(t)",
+                    "学習データ空間分離比 (Train J(t))",
+                    "3D UMAP 良品半径",
+                    "3D UMAP 不良半径",
+                ],
                 markers=True,
-                title="📈 学習回数 (Epoch) に伴う空間分離比 J(t) ＆ 3D UMAP 半径の推移",
+                title=f"📈 学習回数 (Epoch) に伴う空間分離比 J(t) ({selected_split.upper()} vs Train 60%)",
             )
+            _apply_step6_hover_tooltips(fig_sep_curve, x_label="Epoch")
             fig_sep_curve.add_vline(
                 x=int(selected_epoch),
                 line_dash="dash",
@@ -580,11 +807,34 @@ else:
             fig_sep_curve.update_layout(height=320)
             st.plotly_chart(fig_sep_curve, use_container_width=True, key="eval_sep_evolution_chart")
 
+    # Option to overlay Train cluster distribution on 3D UMAP alongside Test samples
+    umap_overlay_c1, umap_overlay_c2 = st.columns([2.6, 1.4])
+    with umap_overlay_c1:
+        overlay_all_splits_on_umap = st.checkbox(
+            "🔬 3D/2D UMAP 上に学習データ (train 60%) も重ねて表示し、学習クラスタ分布に対するテストデータの位置を確認する",
+            value=False,
+            key="step6_umap_overlay_all",
+            help="ONにすると、Section 1 の定量評価（Accuracy/Recall/混同行列）は選択Split（test 20%）に厳密に限定したまま、3D UMAP 上で学習データ(train)のクラスタ分布とテストデータ(test)の位置関係を重ね合わせて確認できます。",
+        )
+    with umap_overlay_c2:
+        with st.popover("ℹ️ 3D UMAP 立体散布図の見方・記号説明 (Tooltip)"):
+            st.markdown(
+                """
+                - **色 (`color`)**: 各サンプルのクラス名（良品クラスおよび各不良サブクラス）。
+                - **マーカー形状 (`symbol`)**: 混同行列の判定ステータス（`TP`, `FN`, `FP`, `TN`）。
+                - **★ 金色ダイヤ (`Normal Multi-Proxy`)**: 学習された良品プロキシの中心座標。良品サンプルがこの周囲に密に集まっているかを確認します。
+                - **◆ マゼンタ十字 (`Defect Mode Proxy`)**: 各不良サブクラスのプロキシ座標。
+                """
+            )
+
+    umap_source_samples = all_samples_list if overlay_all_splits_on_umap else samples_list
+    df_umap_samples = pd.DataFrame(umap_source_samples)
+
     # 3D UMAP Scatter Plot + Interactive Point Selection / Tooltip Popup
     umap_col_main, umap_col_side = st.columns([1.85, 1.15])
 
     with umap_col_main:
-        df_samples["判定ステータス"] = df_samples["cm_category"].map(
+        df_umap_samples["判定ステータス"] = df_umap_samples["cm_category"].map(
             {
                 "TP": "TP: 不良検出 (NG)",
                 "FN": "FN: 不良見落とし (要注意!)",
@@ -592,12 +842,20 @@ else:
                 "TN": "TN: 正常合格 (OK)",
             }
         )
+        df_umap_samples["クラス (Split)"] = (
+            df_umap_samples["label_name"].astype(str)
+            + " ["
+            + df_umap_samples["split"].astype(str)
+            + "]"
+            if overlay_all_splits_on_umap
+            else df_umap_samples["label_name"].astype(str)
+        )
         fig_umap = px.scatter_3d(
-            df_samples,
+            df_umap_samples,
             x="umap_x",
             y="umap_y",
             z="umap_z",
-            color="label_name",
+            color="クラス (Split)" if overlay_all_splits_on_umap else "label_name",
             symbol="判定ステータス",
             custom_data=[
                 "index",
@@ -610,7 +868,7 @@ else:
             ],
             title=(
                 f"Epoch {selected_epoch}: 128次元超球面空間の 3D UMAP 立体投影 "
-                f"（良品マルチプロキシ M={eval_data.get('num_normal_proxies', 1)} ｜ 点ホバーで詳細Tooltip表示）"
+                f"（表示: {'全Split重ね合わせ' if overlay_all_splits_on_umap else split_short_badge} ｜ 点ホバーで詳細Tooltip表示）"
             ),
             height=620,
         )
@@ -618,11 +876,11 @@ else:
             hovertemplate=(
                 "<b>%{customdata[1]}</b><br>"
                 "クラス: %{customdata[2]}<br>"
+                "データ分割 (Split): <b>%{customdata[6]}</b><br>"
                 "混同行列セル: <b>%{customdata[3]}</b><br>"
-                "Cos類似度 s(x): %{customdata[4]:.4f}<br>"
+                "Cos類似度 s(x): %{customdata[4]:.4f} (1.0に近いほど良品中心に近い)<br>"
                 "Cos距離 1-s(x): %{customdata[5]:.4f}<br>"
-                "Split: %{customdata[6]}<br>"
-                "3D UMAP: (%{x:.3f}, %{y:.3f}, %{z:.3f})<extra></extra>"
+                "3D UMAP座標: (%{x:.3f}, %{y:.3f}, %{z:.3f})<extra></extra>"
             )
         )
 
@@ -670,7 +928,7 @@ else:
         umap_3d_event = st.plotly_chart(
             fig_umap,
             use_container_width=True,
-            key=f"eval_3d_umap_chart_ep_{selected_epoch}",
+            key=f"eval_3d_umap_chart_ep_{selected_epoch}_{selected_split}",
             on_select="rerun",
         )
 
@@ -681,7 +939,7 @@ else:
             "該当する全画像が即座に矢印送りポップアップで開きます。"
         )
         fig_umap_2d = px.scatter(
-            df_samples,
+            df_umap_samples,
             x="umap_x",
             y="umap_y",
             color="label_name",
@@ -693,6 +951,7 @@ else:
                 "cm_category",
                 "cosine_similarity",
                 "cosine_distance",
+                "split",
             ],
             title=f"クリック/矩形選択用 UMAP (X-Y平面投影 | Ep {selected_epoch})",
             height=340,
@@ -700,7 +959,7 @@ else:
         fig_umap_2d.update_traces(
             marker=dict(size=9, line=dict(width=1, color="DarkSlateGrey")),
             hovertemplate=(
-                "<b>%{customdata[1]}</b> (%{customdata[2]})<br>"
+                "<b>%{customdata[1]}</b> (%{customdata[2]} | Split: %{customdata[6]})<br>"
                 "判定: %{customdata[3]} | cos=%{customdata[4]:.3f}<extra></extra>"
             ),
         )
@@ -711,7 +970,7 @@ else:
         umap_2d_event = st.plotly_chart(
             fig_umap_2d,
             use_container_width=True,
-            key=f"eval_2d_umap_selector_ep_{selected_epoch}",
+            key=f"eval_2d_umap_selector_ep_{selected_epoch}_{selected_split}",
             on_select="rerun",
             selection_mode=("points", "box", "lasso"),
         )
@@ -728,7 +987,7 @@ else:
 
         if selected_indices:
             matched_umap_samples = [
-                s for s in samples_list if int(s["index"]) in selected_indices
+                s for s in all_samples_list if int(s["index"]) in selected_indices
             ]
             st.success(f"UMAP上で **{len(matched_umap_samples)} 点** が選択されています。")
             if st.button(
@@ -743,7 +1002,7 @@ else:
                 )
 
             # Auto-pop modal the first time a new UMAP selection signature appears
-            sel_sig = f"{selected_epoch}_{','.join(str(i) for i in selected_indices)}"
+            sel_sig = f"{selected_epoch}_{selected_split}_{','.join(str(i) for i in selected_indices)}"
             if st.session_state.get("last_umap_sel_sig") != sel_sig:
                 st.session_state["last_umap_sel_sig"] = sel_sig
                 _trigger_popup_with_samples(
@@ -753,7 +1012,7 @@ else:
 
         # Quick class / cluster popup launcher for 3D UMAP classes
         st.markdown("###### 📂 3D UMAP クラス別・境界近傍サンプルのポップアップ確認")
-        unique_cls_in_eval = sorted(df_samples["label_name"].unique().tolist())
+        unique_cls_in_eval = sorted(df_umap_samples["label_name"].unique().tolist())
         q_c1, q_c2 = st.columns([1.6, 1.4])
         chosen_umap_cls = q_c1.selectbox(
             "確認したいクラスを選択",
@@ -763,9 +1022,8 @@ else:
         )
         if q_c2.button("🖼️ ポップアップで画像送り表示", use_container_width=True):
             if chosen_umap_cls.startswith("("):
-                # Sort by closeness to decision boundary |cosine_similarity - tau_sim|
                 boundary_sorted = sorted(
-                    samples_list,
+                    umap_source_samples,
                     key=lambda s: abs(float(s["cosine_similarity"]) - float(tau_sim)),
                 )[:15]
                 _trigger_popup_with_samples(
@@ -774,7 +1032,7 @@ else:
                 )
             else:
                 cls_samples = [
-                    s for s in samples_list if s["label_name"] == chosen_umap_cls
+                    s for s in umap_source_samples if s["label_name"] == chosen_umap_cls
                 ]
                 _trigger_popup_with_samples(
                     cls_samples,
@@ -784,7 +1042,7 @@ else:
         # Per-class dispersion table
         per_cls_disp = cur_disp.get("per_class_dispersion", [])
         if per_cls_disp:
-            st.markdown(f"###### 📊 Epoch {selected_epoch} クラス別空間分散・中心距離内訳")
+            st.markdown(f"###### 📊 Epoch {selected_epoch} [{selected_split.upper()}] クラス別空間分散・中心距離内訳")
             df_pcd = pd.DataFrame(
                 [
                     {
@@ -812,7 +1070,20 @@ else:
     # =========================================================================
     # SECTION 3 (MOVED DOWN! Was Section 2): Plotly 128-D Raw Vector Heatmap
     # =========================================================================
-    st.subheader("3. 【補助・詳細基準】Plotly 128次元生ベクトル活性化ヒートマップ（次元圧縮なし）")
+    hm_hdr_c1, hm_hdr_c2 = st.columns([3.0, 1.0])
+    hm_hdr_c1.subheader(
+        f"3. 【補助・詳細基準】Plotly 128次元生ベクトル活性化ヒートマップ（次元圧縮なし ｜ 対象: {split_short_badge}）"
+    )
+    with hm_hdr_c2.popover("ℹ️ 128次元ヒートマップの見方・項目説明 (Tooltip)"):
+        st.markdown(
+            """
+            - **横軸 (`D0 .. D127`)**: L2正規化された128次元特徴ベクトル $z \\in \\mathbb{R}^{128}$ の各次元インデックス。
+            - **縦軸 (`[split] クラス名 (ファイルID)`)**: 選択中Splitの良品サンプル群（上部）と各不良サンプル群（下部）。
+            - **色 (`Activation`: 赤＝正の活性化、青＝負の活性化)**:
+              - **良品行同士で縦の縞模様（赤・青のパターン）が揃っているほど、良品クラスタ内分散が小さく一様に凝集**しています。
+              - **不良行で良品とは異なる次元が強く発火（または反転）しているほど、128次元超球面上で直交・分離**できています。
+            """
+        )
     hm_matrix = eval_data["heatmap_matrix"]
     hm_labels = eval_data["heatmap_labels"]
     fig_hm = go.Figure(
@@ -824,12 +1095,18 @@ else:
             zmin=-0.35,
             zmax=0.35,
             colorbar=dict(title="Activation"),
+            hovertemplate=(
+                "サンプル: <b>%{y}</b><br>"
+                "次元 (Dimension): <b>%{x}</b><br>"
+                "正規化活性値 (z_d): <b>%{z:.4f}</b><br>"
+                "💡 <i>良品行と縦の活性パターンが揃うほど類似、反転するほどコサイン距離が遠い</i><extra></extra>"
+            ),
         )
     )
     fig_hm.update_layout(
-        title=f"Epoch {selected_epoch}: 良品群 vs 各不良モードの128次元単位超球面生ベクトル比較",
+        title=f"Epoch {selected_epoch} [{selected_split.upper()}]: 良品群 vs 各不良モードの128次元単位超球面生ベクトル比較",
         xaxis_title="Embedding Dimension (0 .. 127)",
-        yaxis_title="Sample (Label & ID)",
+        yaxis_title="Sample ([Split] Label & ID)",
         height=520,
     )
     st.plotly_chart(fig_hm, use_container_width=True, key="eval_128d_heatmap_chart")

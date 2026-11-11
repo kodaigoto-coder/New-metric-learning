@@ -33,7 +33,7 @@ class DirectAnnotationItemUpdate(BaseModel):
     image_path: str
     file_name: str
     label_name: str
-    split: Literal["train", "val"] = "train"
+    split: Literal["train", "val", "test"] = "train"
     cluster_id: int = 0
 
 
@@ -52,9 +52,11 @@ class DirectAnnotationsEditorRequest(BaseModel):
     )
     rebalance_splits: bool = Field(
         default=False,
-        description="If True, re-runs stratified train/val split assignment using val_ratio instead of keeping row splits.",
+        description="If True, re-runs stratified 6:2:2 (train/val/test) split assignment instead of keeping row splits.",
     )
-    val_ratio: float = Field(default=0.25, ge=0.1, le=0.5)
+    train_ratio: float = Field(default=0.60, ge=0.20, le=0.80)
+    val_ratio: float = Field(default=0.20, ge=0.05, le=0.45)
+    test_ratio: float = Field(default=0.20, ge=0.05, le=0.45)
     seed: int = Field(default=42)
 
 
@@ -98,7 +100,9 @@ class DirectSubfolderAnnotationRequest(BaseModel):
         default="normal",
         description="Subfolder name to treat as the Normal (OK, label_id=0) class.",
     )
-    val_ratio: float = Field(default=0.25, ge=0.1, le=0.5)
+    train_ratio: float = Field(default=0.60, ge=0.20, le=0.80)
+    val_ratio: float = Field(default=0.20, ge=0.05, le=0.45)
+    test_ratio: float = Field(default=0.20, ge=0.05, le=0.45)
     seed: int = Field(default=42)
 
 
@@ -122,7 +126,9 @@ class AnnotationSubmissionRequest(BaseModel):
         default=False,
         description="If True, each image's uploaded parent subfolder name is used directly as its class label.",
     )
-    val_ratio: float = Field(default=0.25, ge=0.1, le=0.5)
+    train_ratio: float = Field(default=0.60, ge=0.20, le=0.80)
+    val_ratio: float = Field(default=0.20, ge=0.05, le=0.45)
+    test_ratio: float = Field(default=0.20, ge=0.05, le=0.45)
     seed: int = Field(default=42)
 
 
@@ -198,14 +204,23 @@ class EvaluationMetricsResponse(BaseModel):
     epoch: int
     is_full_snapshot: bool
     tau_sim: float
+    selected_split: str = "test"
+    split_counts: dict[str, int] = Field(default_factory=dict)
     d_min_centroid: float
     d_min_boundary: float
     train_loss: float
+    val_loss: float = 0.0
+    loss_direction_feedback: str = ""
+    effective_normal_ratio: float = 0.50
     curriculum_progress: float
     effective_top_k: int
     num_normal_proxies: int = 1
     dispersion_metrics: dict[str, Any] = Field(default_factory=dict)
+    dispersion_by_split: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    active_metrics: dict[str, Any] = Field(default_factory=dict)
+    test_metrics: dict[str, Any] = Field(default_factory=dict)
     val_metrics: dict[str, Any]
+    train_metrics: dict[str, Any] = Field(default_factory=dict)
     all_metrics: dict[str, Any]
     threshold_curve: list[dict[str, float]]
     samples: list[dict[str, Any]]

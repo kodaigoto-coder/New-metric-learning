@@ -208,6 +208,27 @@ def _assert_no_torch_tensors(obj: Any, path: str = "root") -> None:
             _assert_no_torch_tensors(item, f"{path}[{idx}]")
 
 
+def _compute_split_margins(
+    z_norm: np.ndarray,
+    cosine_similarities: np.ndarray,
+    defect_mask: np.ndarray,
+    split_mask: np.ndarray,
+    ref_normal_mask: np.ndarray,
+) -> tuple[float, float]:
+    """Compute `(d_min_centroid, d_min_boundary)` for defect samples within `split_mask`."""
+    _ = z_norm
+    split_def = split_mask & defect_mask
+    split_norm = split_mask & (~defect_mask)
+    norm_pool = split_norm if np.any(split_norm) else ref_normal_mask
+    if np.any(split_def) and np.any(norm_pool):
+        defect_scores = cosine_similarities[split_def]
+        normal_scores = cosine_similarities[norm_pool]
+        d_min_c = float(1.0 - np.mean(defect_scores))
+        d_min_b = float(np.min(normal_scores) - np.max(defect_scores))
+        return round(d_min_c, 5), round(d_min_b, 5)
+    return 0.0, 0.0
+
+
 def evaluate_and_persist_epoch_space(
     epoch: int,
     image_paths: list[str],
@@ -220,13 +241,16 @@ def evaluate_and_persist_epoch_space(
     artifacts_dir: Path,
     tau_sim: float = 0.0,
     train_loss: float = 0.0,
+    val_loss: float = 0.0,
+    loss_direction_feedback: str = "",
+    effective_normal_ratio: float = 0.50,
     curriculum_progress: float = 0.0,
     effective_top_k: int = 0,
     save_full_snapshot: bool = False,
     normal_proxies: np.ndarray | None = None,
     defect_proxies: np.ndarray | None = None,
 ) -> dict[str, Any]:
-    """Evaluate the 128-D hypersphere space and atomically persist 2-tier Pure NumPy `.pkl` snapshots."""
+    """Evaluate the 128-D hypersphere space across `train`/`val`/`test` (6:2:2) and persist 2-tier Pure NumPy `.pkl` snapshots."""
     norms = np.linalg.norm(embeddings_128d, axis=1, keepdims=True) + 1e-8
     z_norm = (embeddings_128d / norms).astype(np.float32)
 
@@ -235,6 +259,7 @@ def evaluate_and_persist_epoch_space(
     normal_mask = ~defect_mask
     train_mask = np.array([s == "train" for s in splits], dtype=bool)
     val_mask = np.array([s == "val" for s in splits], dtype=bool)
+    test_mask = np.array([s == "test" for s in splits], dtype=bool)
 
     # Fit normal prototype strictly on training normal samples (fallback to all normals if empty)
     train_normal_mask = normal_mask & train_mask
@@ -276,32 +301,68 @@ def evaluate_and_persist_epoch_space(
     else:
         cosine_similarities = (z_norm @ normal_prototype).astype(np.float32)
 
-    # High-dimensional quantitative cosine distances:
-    # 1. Proxy/Centroid-to-Defect minimum cosine distance: min_{i in Defect} (1 - s(x_i))
-    # 2. Boundary-Normal-to-Defect minimum cosine distance
-    if np.any(defect_mask) and np.any(normal_mask):
-        defect_vecs = z_norm[defect_mask]
-        normal_vecs = z_norm[normal_mask]
-        defect_scores = cosine_similarities[defect_mask]
-        d_min_centroid = float(np.min(1.0 - defect_scores))
-        cross_sims = defect_vecs @ normal_vecs.T
-        d_min_boundary = float(np.min(1.0 - cross_sims))
-    else:
-        d_min_centroid = 0.0
-        d_min_boundary = 0.0
+    # Evaluate masks for val, test, train, and all
+    has_val = bool(np.any(val_mask & defect_mask) and np.any(val_mask & normal_mask))
+    has_test = bool(np.any(test_mask & defect_mask) and np.any(test_mask & normal_mask))
+    has_train = bool(np.any(train_mask & defect_mask) and np.any(train_mask & normal_mask))
 
-    # Evaluate metrics on validation split (or full set if validation has no defects)
-    eval_mask = val_mask if (np.any(val_mask & defect_mask) and np.any(val_mask & normal_mask)) else np.ones(len(z_norm), dtype=bool)
+    eff_val_mask = val_mask if has_val else np.ones(len(z_norm), dtype=bool)
+    eff_test_mask = test_mask if has_test else eff_val_mask
+    eff_train_mask = train_mask if has_train else np.ones(len(z_norm), dtype=bool)
+    all_mask = np.ones(len(z_norm), dtype=bool)
+
+    val_d_min_centroid, val_d_min_boundary = _compute_split_margins(
+        z_norm, cosine_similarities, defect_mask, eff_val_mask, train_normal_mask if np.any(train_normal_mask) else normal_mask
+    )
+    test_d_min_centroid, test_d_min_boundary = _compute_split_margins(
+        z_norm, cosine_similarities, defect_mask, eff_test_mask, train_normal_mask if np.any(train_normal_mask) else normal_mask
+    )
+    train_d_min_centroid, train_d_min_boundary = _compute_split_margins(
+        z_norm, cosine_similarities, defect_mask, eff_train_mask, train_normal_mask if np.any(train_normal_mask) else normal_mask
+    )
+    all_d_min_centroid, all_d_min_boundary = _compute_split_margins(
+        z_norm, cosine_similarities, defect_mask, all_mask, normal_mask
+    )
+
+    # Use validation split margins for curriculum feedback, and store per-split metrics
+    d_min_centroid = val_d_min_centroid
+    d_min_boundary = val_d_min_boundary
+
     val_metrics = compute_binary_metrics_at_threshold(
-        cosine_similarities=cosine_similarities[eval_mask],
-        is_defect=defect_mask[eval_mask],
+        cosine_similarities=cosine_similarities[eff_val_mask],
+        is_defect=defect_mask[eff_val_mask],
         tau_sim=tau_sim,
     )
+    val_metrics["d_min_centroid"] = val_d_min_centroid
+    val_metrics["d_min_boundary"] = val_d_min_boundary
+    val_metrics["sample_count"] = int(np.sum(eff_val_mask))
+
+    test_metrics = compute_binary_metrics_at_threshold(
+        cosine_similarities=cosine_similarities[eff_test_mask],
+        is_defect=defect_mask[eff_test_mask],
+        tau_sim=tau_sim,
+    )
+    test_metrics["d_min_centroid"] = test_d_min_centroid
+    test_metrics["d_min_boundary"] = test_d_min_boundary
+    test_metrics["sample_count"] = int(np.sum(eff_test_mask))
+
+    train_metrics = compute_binary_metrics_at_threshold(
+        cosine_similarities=cosine_similarities[eff_train_mask],
+        is_defect=defect_mask[eff_train_mask],
+        tau_sim=tau_sim,
+    )
+    train_metrics["d_min_centroid"] = train_d_min_centroid
+    train_metrics["d_min_boundary"] = train_d_min_boundary
+    train_metrics["sample_count"] = int(np.sum(eff_train_mask))
+
     all_metrics = compute_binary_metrics_at_threshold(
         cosine_similarities=cosine_similarities,
         is_defect=defect_mask,
         tau_sim=tau_sim,
     )
+    all_metrics["d_min_centroid"] = all_d_min_centroid
+    all_metrics["d_min_boundary"] = all_d_min_boundary
+    all_metrics["sample_count"] = int(len(z_norm))
 
     # Jointly project samples + learned proxies into 3D UMAP space so proxies can be visualized
     extra_blocks: list[np.ndarray] = []
@@ -334,21 +395,37 @@ def evaluate_and_persist_epoch_space(
         norm_proxies_umap_3d = np.zeros((0, 3), dtype=np.float32)
         def_proxies_umap_3d = np.zeros((0, 3), dtype=np.float32)
 
+    all_label_names = [str(name) for name in label_names]
     dispersion_metrics = compute_space_dispersion_metrics(
         embeddings_128d=z_norm,
         cosine_similarities=cosine_similarities,
         labels=labels_arr,
-        label_names=[str(name) for name in label_names],
+        label_names=all_label_names,
         is_defect=defect_mask,
         umap_3d=umap_3d,
     )
+
+    dispersion_by_split: dict[str, dict[str, Any]] = {"all": dispersion_metrics}
+    for sp_key, sp_mask in (("train", eff_train_mask), ("val", eff_val_mask), ("test", eff_test_mask)):
+        sp_indices = np.where(sp_mask)[0].tolist()
+        if sp_indices:
+            dispersion_by_split[sp_key] = compute_space_dispersion_metrics(
+                embeddings_128d=z_norm[sp_mask],
+                cosine_similarities=cosine_similarities[sp_mask],
+                labels=labels_arr[sp_mask],
+                label_names=[all_label_names[idx] for idx in sp_indices],
+                is_defect=defect_mask[sp_mask],
+                umap_3d=umap_3d[sp_mask],
+            )
+        else:
+            dispersion_by_split[sp_key] = dispersion_metrics
 
     base_payload: dict[str, Any] = {
         "epoch": int(epoch),
         "is_full_snapshot": False,
         "image_paths": [str(p) for p in image_paths],
         "labels": labels_arr,
-        "label_names": [str(name) for name in label_names],
+        "label_names": all_label_names,
         "is_defect": defect_mask,
         "splits": [str(s) for s in splits],
         "embeddings_128d": z_norm,
@@ -361,11 +438,19 @@ def evaluate_and_persist_epoch_space(
         "umap_3d": umap_3d,
         "d_min_centroid": round(d_min_centroid, 5),
         "d_min_boundary": round(d_min_boundary, 5),
+        "test_d_min_centroid": round(test_d_min_centroid, 5),
+        "test_d_min_boundary": round(test_d_min_boundary, 5),
         "train_loss": round(float(train_loss), 5),
+        "val_loss": round(float(val_loss), 5),
+        "loss_direction_feedback": str(loss_direction_feedback),
+        "effective_normal_ratio": round(float(effective_normal_ratio), 4),
         "curriculum_progress": round(float(curriculum_progress), 4),
         "effective_top_k": int(effective_top_k),
         "dispersion_metrics": dispersion_metrics,
+        "dispersion_by_split": dispersion_by_split,
         "metrics_at_zero": val_metrics,
+        "test_metrics_at_zero": test_metrics,
+        "train_metrics_at_zero": train_metrics,
         "all_metrics_at_zero": all_metrics,
         "gap_features": None,
     }
@@ -398,7 +483,12 @@ def evaluate_and_persist_epoch_space(
         "full_pkl_path": full_path_str,
         "d_min_centroid": round(d_min_centroid, 5),
         "d_min_boundary": round(d_min_boundary, 5),
+        "test_d_min_centroid": round(test_d_min_centroid, 5),
+        "test_d_min_boundary": round(test_d_min_boundary, 5),
         "dispersion_metrics": dispersion_metrics,
+        "dispersion_by_split": dispersion_by_split,
         "val_metrics": val_metrics,
+        "test_metrics": test_metrics,
+        "train_metrics": train_metrics,
         "all_metrics": all_metrics,
     }

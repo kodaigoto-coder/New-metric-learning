@@ -400,4 +400,35 @@ $$L_{\text{total}} = \underbrace{\lambda_{\text{norm}} \frac{1}{|\mathcal{B}_{\t
    * [datasets.py](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/backend/app/routers/datasets.py) に `POST /api/v1/datasets/{dataset_name}/classes/rename`（クラス名変更・統合）、`DELETE /api/v1/datasets/{dataset_name}/classes/{class_name}`（特定クラスフォルダ削除）、および `POST /api/v1/annotations/direct-update`（個別／一括ラベル直接更新＋`raw/<class>/` 実ファイル同期移動）を追加。
    * [1_clustering_annotation.py](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/frontend/app/pages/1_clustering_annotation.py) のセクション1に「クラスタリングなしでサブフォルダ名をそのまま正解ラベル (`annotations.json`) として登録するボタン」と「サブフォルダ名称変更・統合・削除タブ」を追加し、セクション4に **全画像のラベル一括置換＆セル直接編集テーブル (`st.data_editor`)** を実装した。
 
+---
+
+## 18. 6:2:2 データ分割（Train / Val / Test）・Val評価フィードバック・Accuracy指標・グラフ項目Tooltipの実装 (2026-11-11)
+
+ディープラーニングの評価としてデータリーク（「カンニング評価」）を完全に排除し、学習データ・評価データ・テストデータの役割を厳密に分離するため、以下のアーキテクチャ更新を実施した。
+
+### 18.1 学習：評価：テスト ＝ 6 : 2 : 2 のクラス別層化分割 (`train : val : test = 60% : 20% : 20%`)
+* **層化分割ロジック ([datasets.py](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/backend/app/routers/datasets.py))**:
+  * 各クラス（良品クラスおよび各不良サブクラス）ごとに固定乱数シードでシャッフルした上で、`train`（60%）・`val`（20%）・`test`（20%）に自動分割して `annotations.json` に保存する（サンプル数 $N_c \ge 3$ のクラスは必ず `train`, `val`, `test` のすべてに最低1枚以上割り当てられるよう保証）。
+  * 既存の2分割（`train`/`val` のみ）で保存されていた過去データセットや過去セッションの `.pkl` スナップショットについても、読み込み時に自動的に 6:2:2 分割へアップグレードする後方互換ロジックを [datasets.py](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/backend/app/routers/datasets.py), [train_jobs.py](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/trainer/app/routers/train_jobs.py), [evaluation.py](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/backend/app/routers/evaluation.py) に実装した。
+
+### 18.2 3つのデータ分割の厳密な役割分担と次エポックへの Loss 方向性フィードバック
+1. **🏋️ 学習データ (`train`: 60%) — 勾配更新 ＆ クラスタ分布の確からしさ確認**:
+   * [train_jobs.py](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/trainer/app/routers/train_jobs.py) において、モデルの重み更新（`NAB-Sampler` によるミニバッチ学習）だけでなく、**特徴量正規化統計量のキャリブレーション（`model.calibrate_feature_stats`）**、**初期プロキシのK-Means初期化（`initialize_proxies_from_embeddings`）**、および **Class-Balanced 重み算出（`compute_class_balanced_weights`）** をすべて `train_mask_np`（学習データ 60%）のみに厳密制限し、`val` / `test` からの情報漏洩をゼロにした。
+   * Step 6 ([3_space_evaluation.py](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/frontend/app/pages/3_space_evaluation.py)) では、学習データで形成されたクラスタ分布の確からしさ（良品クラスタ内分散 $\sigma^2_{\text{norm}}$ の収縮度合いや空間分離比 $J(t)$）を確認・比較する基準として常時参照できる。
+2. **📋 評価データ (`val`: 20%) — 次エポックの Loss 方向性制御 ＆ ベストモデル選定**:
+   * 各エポック終了時に `val` データに対する求心力Loss（`val_loss_centripetal`）・斥力Loss（`val_loss_repel`）・`val_recall`・`val_precision`・`d_min_boundary` を評価し、[CurriculumPenaltyScheduler.step()](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/trainer/app/core/scheduler.py) に渡して $\Delta r = \text{clip}(0.25 \cdot (\mathcal{L}_{\text{cent}}^{\text{val}} - \mathcal{L}_{\text{repel}}^{\text{val}}) + 0.10 \cdot ((1 - \text{Prec}_{\text{val}}) - (1 - \text{Rec}_{\text{val}})), -0.15, +0.15)$ により **次のエポックの Loss 方向性（動的求心力比率 `effective_normal_ratio`）** を自動調整する：
+     * **求心力強化 (`centripetal_focus`)**: $\Delta r > +0.012$（`val` の良品求心力Lossが不良斥力Lossより高い、または過検出FPが多い状態）のとき、次エポックの求心力比率を引き上げて良品凝集を強める。
+     * **斥力強化 (`repulsion_focus`)**: $\Delta r < -0.012$（`val` の不良斥力Lossが良品求心力Lossより高い、または不良見逃しFNが残っている状態）のとき、次エポックの求心力比率を引き下げて不良斥力を強める。
+     * **均衡維持 (`balanced_hold`)**: $|\Delta r| \le 0.012$ で両者が釣り合っている場合は基準比率 `normal_loss_ratio`（デフォルト `0.50`）を維持する。
+   * また `best_model.pt` のチェックポイント保存判定も `val` データのみで実施する。
+3. **🧪 テストデータ (`test`: 20%) — 最終的な学習の良し悪しの厳密評価（Step 6 デフォルト）**:
+   * 学習にもエポック間のLoss方向性制御にも一切関与していない完全未知の `test` データ（20%）を Step 6 ([3_space_evaluation.py](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/frontend/app/pages/3_space_evaluation.py)) のデフォルト評価対象に設定し、混同行列・閾値曲線・類似度ヒストグラム・KPIカードをすべて `test` データで算出・表示する（上部セレクタから `test` / `val` / `train` / `all` をワンクリックで切り替え可能、かつ全4分割の比較サマリーテーブルを常時表示）。
+
+### 18.3 評価指標への `Accuracy (正解率)` の追加と全グラフ項目の説明 Tooltip 実装
+* **`Accuracy` の追加**:
+  * [evaluator.py](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/trainer/app/core/evaluator.py) および [evaluation.py](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/backend/app/routers/evaluation.py) に $\text{Accuracy} = \frac{TP + TN}{TP + TN + FP + FN}$ を追加し、Phase 2 ([2_training_monitor.py](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/frontend/app/pages/2_training_monitor.py)) のリアルタイム学習曲線・エポックログ・セッション履歴一覧、および Step 6 ([3_space_evaluation.py](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/frontend/app/pages/3_space_evaluation.py)) のKPIカード・$\tau_{\text{sim}}$ 閾値曲線・6:2:2分割比較表のすべてに `Accuracy` を表示。
+* **グラフ項目・指標の説明 Tooltip 実装**:
+  * Phase 2 および Step 6 のすべてのグラフ・KPIカードに、`st.popover("ℹ️ グラフ項目の説明 Tooltip")`、KPIカードの `help="..."`、および Plotly 各トレースのカスタム `hovertemplate`（マウスホバー時に各指標の日本語解説を表示）を実装した。
+
+
 

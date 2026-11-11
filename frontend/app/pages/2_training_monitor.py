@@ -18,6 +18,41 @@ st.set_page_config(page_title="Phase 2: Dynamic Metric-Learning", layout="wide")
 client = BackendApiClient()
 
 
+_METRIC_TOOLTIP_MAP: dict[str, str] = {
+    "train_loss": "学習データ(Train 60%)の総合Loss (①良品求心力 + ②不良斥力 + 直交補助項)。0に近いほど学習データの凝集・分離が進んでいます。",
+    "val_loss": "評価データ(Val 20%)の総合Loss。学習に使っていない評価データでのLossであり、次エポックのLoss方向性(求心力vs斥力バランス)へフィードバックされます。",
+    "loss_centripetal": "① 良品の求心力Loss (Train): 1 - S(x, p_norm)。0に近いほど良品がプロキシ中心へ凝集しています。",
+    "loss_repel": "② 不良の斥力Loss (Train): max(0, S(x, p_norm) - δ)。0に近いほど不良品がマージンδの外側へ押し出されています。",
+    "val_loss_centripetal": "① 評価データ(Val 20%)の良品求心力Loss。高い場合は次エポックで求心力比率を引き上げます。",
+    "val_loss_repel": "② 評価データ(Val 20%)の不良斥力Loss。高い場合は次エポックで斥力比率を引き上げます。",
+    "effective_normal_ratio": "次エポックへ返す動的求心力比率 (Val評価フィードバック反映後)。0.50が50:50均衡、>0.50で求心力強化、<0.50で斥力強化。",
+    "val_accuracy": "評価データ(Val 20%)の正解率 Accuracy = (TP+TN)/(TP+TN+FP+FN)。全体のうち良品・不良品を正しく判定できた割合。",
+    "val_recall": "評価データ(Val 20%)の不良検出率 Recall = TP/(TP+FN)。不良品を見逃さず検知できた割合（1.0で見逃しゼロ）。",
+    "val_precision": "評価データ(Val 20%)の適合率 Precision = TP/(TP+FP)。不良と判定した中で実際に不良だった割合（1.0で過検出ゼロ）。",
+    "val_f1": "評価データ(Val 20%)のF1スコア = 2·Precision·Recall/(Precision+Recall)。見逃し防止と過検出抑制の総合バランス指標。",
+    "test_accuracy": "テストデータ(Test 20%: 完全未知)の正解率 Accuracy = (TP+TN)/N。カンニングなしの最終総合正解率。",
+    "test_recall": "テストデータ(Test 20%: 完全未知)の不良検出率 Recall = TP/(TP+FN)。カンニングなしの最終見逃し防止性能。",
+    "test_f1": "テストデータ(Test 20%: 完全未知)のF1スコア。カンニングなしの最終総合識別性能。",
+    "d_min_boundary": "境界最小コサイン余裕度 = (良品の最小類似度) - (不良の最大類似度)。0より大きければ良品と不良の分布が完全に分離しています。",
+    "d_min_centroid": "中心間最小コサイン距離 = 1 - (不良の平均類似度)。良品プロキシから不良群がどれだけ離れたかを表します（目標 ≥ 1.0）。",
+    "normal_intra_disp": "良品クラスタ内分散 σ²_norm = Mean(1 - S(x_norm, p_norm))。小さいほど良品が一点に鋭く凝集しています。",
+    "inter_class_dist": "良品プロキシ〜不良群の平均コサイン距離 D_inter。大きいほど不良クラスタが良品から遠くへ離れています。",
+}
+
+
+def _apply_series_hover_tooltips(fig: Any) -> None:
+    """Attach explanatory Japanese tooltips to each trace in a Plotly line chart."""
+    for trace in fig.data:
+        series_name = str(getattr(trace, "name", ""))
+        desc = _METRIC_TOOLTIP_MAP.get(series_name, series_name)
+        trace.hovertemplate = (
+            f"<b>{series_name}</b><br>"
+            "Epoch: %{x}<br>"
+            "値 (Value): <b>%{y:.4f}</b><br>"
+            f"💡 <i>{desc}</i><extra></extra>"
+        )
+
+
 def _render_training_history(
     container: Any,
     history: list[dict[str, Any]],
@@ -25,73 +60,143 @@ def _render_training_history(
     render_seq: int,
     prefix: str = "live",
 ) -> None:
-    """Render training curves and XBM audit table with unique element keys to prevent duplicate ID errors."""
+    """Render training curves and XBM audit table with unique element keys and explanatory tooltips."""
     if not history:
         return
     df_hist = pd.DataFrame(history)
     with container.container():
         c_left, c_mid, c_right = st.columns(3)
-        loss_cols = [
-            col
-            for col in ["train_loss", "loss_centripetal", "loss_repel", "curriculum_progress"]
-            if col in df_hist.columns
-        ]
-        fig_loss = px.line(
-            df_hist,
-            x="epoch",
-            y=loss_cols,
-            markers=True,
-            title="Loss推移 (Total / ①良品求心力 loss_centripetal / ②不良斥力 loss_repel)",
-        )
-        c_left.plotly_chart(
-            fig_loss,
-            use_container_width=True,
-            key=f"{prefix}_train_loss_chart_{render_seq}",
-        )
 
-        fig_rec = px.line(
-            df_hist,
-            x="epoch",
-            y=[col for col in ["val_recall", "val_f1", "val_precision"] if col in df_hist.columns],
-            markers=True,
-            title=f"検証 Recall / F1 / Precision (@ τ_sim={tau_sim:.2f})",
-        )
-        c_mid.plotly_chart(
-            fig_rec,
-            use_container_width=True,
-            key=f"{prefix}_train_recall_chart_{render_seq}",
-        )
+        with c_left:
+            with st.popover("ℹ️ Loss・次エポック方向性グラフの項目説明 (Tooltip)"):
+                st.markdown(
+                    """
+                    - **`train_loss`**: 学習データ (`train` 60%) に対する総合Loss。エポックとともに低下するほど学習が進んでいます。
+                    - **`val_loss`**: 評価データ (`val` 20%) に対する総合Loss。**次エポックのLoss方向性（求心力 vs 斥力バランス）を決める基準**です。
+                    - **`loss_centripetal`**: ① 良品の求心力項 $1 - S(x, p_{\\text{norm}})$。`0.0` に近づくほど良品クラスタの分散が小さくなります。
+                    - **`loss_repel`**: ② 不良の斥力項 $\\max(0, S(x, p_{\\text{norm}}) - \\delta)$。`0.0` に近づくほど不良品が境界 $\\delta$ の外へ押し出されています。
+                    - **`effective_normal_ratio`**: 評価データ (`val`) の結果を受けて次エポックに適用される求心力比率（基準 `0.50`）。
+                    """
+                )
+            loss_cols = [
+                col
+                for col in [
+                    "train_loss",
+                    "val_loss",
+                    "loss_centripetal",
+                    "loss_repel",
+                    "effective_normal_ratio",
+                ]
+                if col in df_hist.columns
+            ]
+            fig_loss = px.line(
+                df_hist,
+                x="epoch",
+                y=loss_cols,
+                markers=True,
+                title="① Loss推移 (Train / Val / 求心力 / 斥力 / 次Epoch方向性比率)",
+            )
+            _apply_series_hover_tooltips(fig_loss)
+            st.plotly_chart(
+                fig_loss,
+                use_container_width=True,
+                key=f"{prefix}_train_loss_chart_{render_seq}",
+            )
 
-        margin_cols = [
-            col
-            for col in ["d_min_boundary", "d_min_centroid", "normal_intra_disp", "inter_class_dist"]
-            if col in df_hist.columns
-        ]
-        fig_margin = px.line(
-            df_hist,
-            x="epoch",
-            y=margin_cols,
-            markers=True,
-            title="高次元最小コサイン距離 & 良品クラスタ内分散 (normal_intra_disp) 推移",
-        )
-        c_right.plotly_chart(
-            fig_margin,
-            use_container_width=True,
-            key=f"{prefix}_train_margin_chart_{render_seq}",
-        )
+        with c_mid:
+            with st.popover("ℹ️ Accuracy / Recall / F1 / Precision グラフの項目説明 (Tooltip)"):
+                st.markdown(
+                    """
+                    - **`val_accuracy` (評価データ正解率)**: 評価データ (`val` 20%) 全体のうち良品・不良品を正しく分類できた割合 $\\frac{TP+TN}{TP+TN+FP+FN}$。
+                    - **`test_accuracy` (テストデータ正解率)**: 学習・制御に一切使っていない未知テストデータ (`test` 20%) の最終正解率。
+                    - **`val_recall` / `test_recall` (不良検出率)**: 不良品を見逃さず検出できた割合 $\\frac{TP}{TP+FN}$（`1.0` で見逃しゼロ）。
+                    - **`val_f1` / `test_f1` (F1スコア)**: Recall（見逃し防止）と Precision（過検出防止）の調和平均。
+                    - **`val_precision` (適合率)**: NG判定した中で本当に不良品だった割合 $\\frac{TP}{TP+FP}$。
+                    """
+                )
+            acc_rec_cols = [
+                col
+                for col in [
+                    "val_accuracy",
+                    "val_recall",
+                    "val_f1",
+                    "val_precision",
+                    "test_accuracy",
+                    "test_recall",
+                    "test_f1",
+                ]
+                if col in df_hist.columns
+            ]
+            fig_rec = px.line(
+                df_hist,
+                x="epoch",
+                y=acc_rec_cols,
+                markers=True,
+                title=f"② Accuracy / Recall / F1 / Precision 推移 (@ τ_sim={tau_sim:.2f})",
+            )
+            _apply_series_hover_tooltips(fig_rec)
+            st.plotly_chart(
+                fig_rec,
+                use_container_width=True,
+                key=f"{prefix}_train_recall_chart_{render_seq}",
+            )
 
-        st.markdown("##### エポック別ログ（50:50 求心力・斥力内訳 ＆ クラス内分散・XBMメモリ解放監査）")
+        with c_right:
+            with st.popover("ℹ️ 最小距離マージン & 良品クラスタ内分散グラフの項目説明 (Tooltip)"):
+                st.markdown(
+                    """
+                    - **`d_min_boundary` (境界最小余裕度)**: $(\\text{良品の最小類似度}) - (\\text{不良の最大類似度})$。**`0.0` を超えると良品と不良品の分布に重なりがゼロ（完全分離）**であることを意味します。
+                    - **`d_min_centroid` (中心間コサイン距離)**: $1 - \\text{Mean}(S(x_{\\text{anom}}, p_{\\text{norm}}))$。良品中心から不良群がどれだけ離れたかを示します（目標 $\\ge 1.0$：直交以上）。
+                    - **`normal_intra_disp` (良品クラスタ内分散 $\\sigma^2_{\\text{norm}}$)**: 良品データのプロキシ周囲でのばらつき。**エポックが進むにつれて `0.0` に向かって下がり続けるのが理想**です。
+                    - **`inter_class_dist` (クラス間距離 $D_{\\text{inter}}$)**: 良品中心と不良クラスタ間の平均コサイン距離。上がるほど分離が進んでいます。
+                    """
+                )
+            margin_cols = [
+                col
+                for col in [
+                    "d_min_boundary",
+                    "d_min_centroid",
+                    "normal_intra_disp",
+                    "inter_class_dist",
+                ]
+                if col in df_hist.columns
+            ]
+            fig_margin = px.line(
+                df_hist,
+                x="epoch",
+                y=margin_cols,
+                markers=True,
+                title="③ 高次元最小コサイン距離 & 良品クラスタ内分散 (normal_intra_disp) 推移",
+            )
+            _apply_series_hover_tooltips(fig_margin)
+            st.plotly_chart(
+                fig_margin,
+                use_container_width=True,
+                key=f"{prefix}_train_margin_chart_{render_seq}",
+            )
+
+        st.markdown(
+            "##### エポック別ログ（6:2:2分割 Val評価フィードバック ＆ Test最終指標・Accuracy・分散監査）"
+        )
         display_cols = [
             col
             for col in [
                 "epoch",
                 "train_loss",
+                "val_loss",
                 "loss_centripetal",
                 "loss_repel",
-                "normal_loss_ratio",
+                "effective_normal_ratio",
+                "loss_direction_feedback",
+                "val_accuracy",
                 "val_recall",
                 "val_f1",
                 "val_precision",
+                "test_accuracy",
+                "test_recall",
+                "test_f1",
+                "test_precision",
+                "train_accuracy",
                 "normal_intra_disp",
                 "defect_intra_disp",
                 "inter_class_dist",
@@ -148,12 +253,15 @@ with st.sidebar:
 
 try:
     ann = client.get_annotations(dataset_name=active_dataset_name)
+    sp_cnts = ann.get("split_counts", {})
     st.info(
         f"📂 **学習対象データセット: `{active_dataset_name}`** ｜ "
-        f"確定済みアノテーション (`annotations.json`): 総数 **{ann['total_samples']} 枚** ｜ "
+        f"総数 **{ann['total_samples']} 枚** ｜ "
+        f"**6:2:2 分割**: 🏋️学習 (`train` 60%)=**{sp_cnts.get('train', '-')}枚**, "
+        f"📋評価 (`val` 20%: Loss方向性フィードバック)=**{sp_cnts.get('val', '-')}枚**, "
+        f"🧪テスト (`test` 20%: 最終性能評価)=**{sp_cnts.get('test', '-')}枚** ｜ "
         f"良品クラス: `{ann.get('normal_class_name', 'normal')}` (`label_id=0`) ｜ "
-        f"学習クラス内訳: `{ann['class_counts']}` ｜ "
-        f"クラスID割り当て: `{ann.get('class_map', {})}`"
+        f"クラス内訳: `{ann['class_counts']}`"
     )
 except Exception:
     st.warning(
@@ -408,12 +516,14 @@ else:
                 "メモ / ラベル": s.get("session_label", ""),
                 "データセット": s.get("dataset_name", "default"),
                 "Loss": s.get("loss_type", ""),
-                "バックボーン": s.get("backbone_name", ""),
                 "完了エポック": f"{s.get('epochs_completed', 0)}/{s.get('total_epochs', 0)}",
                 "Best Epoch": s.get("best_epoch", 0),
-                "Best Recall": f"{s.get('best_val_recall', 0.0):.4f}",
-                "Best F1": f"{s.get('best_val_f1', 0.0):.4f}",
-                "Best Precision": f"{s.get('best_val_precision', 0.0):.4f}",
+                "Test Accuracy": f"{s.get('best_test_accuracy', s.get('best_val_accuracy', 0.0)):.4f}",
+                "Test Recall": f"{s.get('best_test_recall', s.get('best_val_recall', 0.0)):.4f}",
+                "Test F1": f"{s.get('best_test_f1', s.get('best_val_f1', 0.0)):.4f}",
+                "Val Accuracy": f"{s.get('best_val_accuracy', 0.0):.4f}",
+                "Val Recall": f"{s.get('best_val_recall', 0.0):.4f}",
+                "Val F1": f"{s.get('best_val_f1', 0.0):.4f}",
                 "Best d_min (境界)": f"{s.get('best_d_min_boundary', 0.0):.4f}",
                 "状態": s.get("status", ""),
                 "実行日時": str(s.get("created_at", ""))[:19].replace("T", " "),
@@ -428,8 +538,9 @@ else:
         s["session_id"]: (
             f"Session #{s['session_number']:04d} ({s['session_id']}) ｜ "
             f"Dataset: {s.get('dataset_name', 'default')} ｜ "
-            f"Loss: {s.get('loss_type', '')} ｜ "
-            f"Best Recall={s.get('best_val_recall', 0.0):.3f}, F1={s.get('best_val_f1', 0.0):.3f} "
+            f"Test Acc={s.get('best_test_accuracy', s.get('best_val_accuracy', 0.0)):.3f}, "
+            f"Test Recall={s.get('best_test_recall', s.get('best_val_recall', 0.0)):.3f}, "
+            f"Val F1={s.get('best_val_f1', 0.0):.3f} "
             f"({s.get('session_label', '')})"
         )
         for s in all_sessions
@@ -449,13 +560,33 @@ else:
             s_hist = s_detail.get("history", [])
             s_cfg = s_detail.get("config", {})
 
-            sc1, sc2, sc3, sc4, sc5, sc6 = st.columns(6)
+            sc1, sc2, sc3, sc4, sc5, sc6, sc7 = st.columns(7)
             sc1.metric("呼び出しセッション", f"#{s_detail.get('session_number', 1):04d}")
             sc2.metric("対象データセット", s_detail.get("dataset_name", "default"))
-            sc3.metric("最高到達 Recall", f"{s_detail.get('best_val_recall', 0.0):.4f}", f"Best Epoch {s_detail.get('best_epoch', 1)}")
-            sc4.metric("最高到達 F1", f"{s_detail.get('best_val_f1', 0.0):.4f}")
-            sc5.metric("最高 境界最小距離 d_min", f"{s_detail.get('best_d_min_boundary', 0.0):.4f}")
-            sc6.metric("完了エポック数", f"{s_detail.get('epochs_completed', len(s_hist))} ep")
+            sc3.metric(
+                "Test Accuracy (テスト正解率)",
+                f"{s_detail.get('best_test_accuracy', s_detail.get('best_val_accuracy', 0.0)):.4f}",
+                f"Best Epoch {s_detail.get('best_epoch', 1)}",
+                help="学習・制御に未使用の未知テストデータ(20%)における正解率 (TP+TN)/N。",
+            )
+            sc4.metric(
+                "Test Recall / F1",
+                f"{s_detail.get('best_test_recall', s_detail.get('best_val_recall', 0.0)):.4f}",
+                f"F1={s_detail.get('best_test_f1', s_detail.get('best_val_f1', 0.0)):.4f}",
+                help="未知テストデータ(20%)における不良検出率 Recall と F1 スコア。",
+            )
+            sc5.metric(
+                "Val Accuracy / Recall",
+                f"{s_detail.get('best_val_accuracy', 0.0):.4f}",
+                f"Rec={s_detail.get('best_val_recall', 0.0):.4f}",
+                help="評価データ(20%)における正解率と不良検出率（次エポックのLoss方向性制御・Bestモデル選定基準）。",
+            )
+            sc6.metric(
+                "最高 境界最小距離 d_min",
+                f"{s_detail.get('best_d_min_boundary', 0.0):.4f}",
+                help="良品の最小類似度と不良の最大類似度の差（>0で完全分離）。",
+            )
+            sc7.metric("完了エポック数", f"{s_detail.get('epochs_completed', len(s_hist))} ep")
 
             with st.expander(f"📋 `{selected_recall_session}` の学習ハイパーパラメータ設定を確認", expanded=False):
                 st.json(s_cfg if s_cfg else {"loss_type": s_detail.get("loss_type"), "backbone_name": s_detail.get("backbone_name")})
