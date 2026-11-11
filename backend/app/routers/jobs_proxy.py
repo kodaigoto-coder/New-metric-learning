@@ -17,10 +17,13 @@ router = APIRouter(prefix="/api/v1/jobs", tags=["jobs-proxy"])
 @router.post("/clustering")
 def trigger_clustering_job(req: ClusteringTriggerRequest) -> dict[str, Any]:
     """Forward Phase 1 clustering job request to `trainer-service`."""
+    payload = req.model_dump()
+    if not payload.get("dataset_name"):
+        payload["dataset_name"] = BackendConfig.get_active_dataset()
     url = f"{BackendConfig.TRAINER_API_URL}/internal/jobs/clustering"
     try:
         with httpx.Client(timeout=30.0) as client:
-            resp = client.post(url, json=req.model_dump())
+            resp = client.post(url, json=payload)
             if resp.status_code == 409:
                 raise HTTPException(status_code=409, detail=resp.json().get("detail", "Job conflict"))
             resp.raise_for_status()
@@ -33,11 +36,14 @@ def trigger_clustering_job(req: ClusteringTriggerRequest) -> dict[str, Any]:
 
 @router.post("/training")
 def trigger_training_job(req: TrainingTriggerRequest) -> dict[str, Any]:
-    """Forward Phase 2 MS-Loss + XBM training job request to `trainer-service`."""
+    """Forward Phase 2 training job request to `trainer-service`."""
+    payload = req.model_dump()
+    if not payload.get("dataset_name"):
+        payload["dataset_name"] = BackendConfig.get_active_dataset()
     url = f"{BackendConfig.TRAINER_API_URL}/internal/jobs/training"
     try:
         with httpx.Client(timeout=30.0) as client:
-            resp = client.post(url, json=req.model_dump())
+            resp = client.post(url, json=payload)
             if resp.status_code == 409:
                 raise HTTPException(status_code=409, detail=resp.json().get("detail", "Job conflict"))
             resp.raise_for_status()

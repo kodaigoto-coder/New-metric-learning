@@ -1,4 +1,4 @@
-"""Phase 1 UI: Folder Upload (Subfolder = Class Name), 2-Stage Clustering & Pseudo-Multiclass Annotation."""
+"""Phase 1 UI: Multi-Dataset Manager, Folder Upload, Fixed-Normal + Anomaly-Only Clustering & Pseudo-Multiclass Annotation."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ st.set_page_config(page_title="Phase 1: Clustering & Annotation", layout="wide")
 client = BackendApiClient()
 
 _VALID_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".webp", ".tif", ".tiff"}
-_NORMAL_CANDIDATE_NAMES = {"normal", "good", "ok", "良品", "正常", "pass"}
+_NORMAL_CANDIDATE_NAMES = {"normal", "nomal", "good", "ok", "良品", "正常", "pass"}
 
 
 def _detect_default_normal_class(class_names: list[str]) -> str:
@@ -31,7 +31,7 @@ def _detect_default_normal_class(class_names: list[str]) -> str:
         if name.lower() in _NORMAL_CANDIDATE_NAMES:
             return name
     for name in class_names:
-        if any(cand in name.lower() for cand in ("normal", "good", "ok", "良品", "正常")):
+        if any(cand in name.lower() for cand in ("normal", "nomal", "good", "ok", "良品", "正常")):
             return name
     return class_names[0] if class_names else "normal"
 
@@ -53,7 +53,6 @@ def _resolve_subfolder_and_filename(
     if Path(fname).suffix.lower() not in _VALID_IMAGE_EXTS:
         return None
 
-    # Strip shared root directory if user selected a top-level parent directory (e.g. `dataset/normal/001.png`)
     if shared_root and len(parts) >= 3 and parts[0] == shared_root:
         parts = parts[1:]
 
@@ -87,7 +86,6 @@ def _parse_uploaded_objects(
         else:
             raw_entries.append((uf_name, uf_bytes))
 
-    # Determine if all entries with depth >= 3 share a common parent root folder name
     deep_roots: set[str] = set()
     has_shallow_two_part = False
     for rpath, _ in raw_entries:
@@ -118,36 +116,154 @@ def _parse_uploaded_objects(
     return parsed_items
 
 
-st.title("フェーズ1：フォルダ画像アップロード・2段階クラスタリング ＆ クラスアノテーション")
+st.title("フェーズ1：複数データセット管理・フォルダアップロード ＆ 異常クラス自動細分化クラスタリング")
 
-# Fetch current dataset info
+# Fetch dataset catalog & active dataset
 try:
-    ds_info = client.get_datasets()
+    catalog_data = client.get_datasets_catalog()
 except Exception:
-    ds_info = {"total_images": 0, "subfolder_classes": {}, "detected_class_names": []}
+    catalog_data = {"active_dataset": "default", "datasets": []}
+
+active_dataset_name: str = catalog_data.get("active_dataset", "default")
+all_datasets_meta: list[dict[str, Any]] = catalog_data.get("datasets", [])
+dataset_names_list: list[str] = [d["dataset_name"] for d in all_datasets_meta] or ["default"]
+
+# Sidebar quick dataset switcher
+with st.sidebar:
+    st.markdown("### 📂 アクティブデータセット切替")
+    sb_idx = (
+        dataset_names_list.index(active_dataset_name)
+        if active_dataset_name in dataset_names_list
+        else 0
+    )
+    sb_selected_ds = st.selectbox(
+        "検証対象データセット",
+        options=dataset_names_list,
+        index=sb_idx,
+        key="sidebar_ds_select",
+        help="切り替えると Phase 1 / Phase 2 / Step 6 の対象データセットが即座に切り替わります。",
+    )
+    if sb_selected_ds != active_dataset_name:
+        client.select_or_create_dataset(dataset_name=sb_selected_ds)
+        st.rerun()
+
+# Section 0: Multi-Dataset Storage & Switching Panel
+with st.expander("0. 📂 複数データセットの管理（新規作成・別名複製保存・切り替え検証）", expanded=True):
+    st.caption(
+        "複数の検証データセット（製品品種別・ロット別・テスト条件別など）を独立したディレクトリに分けて保存し、"
+        "いつでもワンクリックで切り替えながらクラスタリング・学習・評価を行えます。"
+    )
+    ds_col1, ds_col2, ds_col3 = st.columns([1.4, 1.8, 1.3])
+
+    with ds_col1:
+        st.markdown("##### ① 保存済みデータセットの切り替え")
+        cur_idx = (
+            dataset_names_list.index(active_dataset_name)
+            if active_dataset_name in dataset_names_list
+            else 0
+        )
+        chosen_ds = st.selectbox(
+            "現在選択中のデータセット (Active Dataset)",
+            options=dataset_names_list,
+            index=cur_idx,
+            key="main_ds_selector",
+        )
+        if st.button("🔄 このデータセットに切り替え", use_container_width=True):
+            client.select_or_create_dataset(dataset_name=chosen_ds)
+            st.success(f"アクティブデータセットを `{chosen_ds}` に切り替えました。")
+            st.rerun()
+
+    with ds_col2:
+        st.markdown("##### ② 新規データセット作成 ／ 既存データセットの別名保存")
+        new_ds_name = st.text_input(
+            "新しいデータセット名",
+            value="",
+            placeholder="例: bottle_dataset_v2, metal_nut, screw_lotB",
+            key="new_ds_name_input",
+        )
+        clone_options = ["(空の新規データセットとして作成)"] + dataset_names_list
+        clone_choice = st.selectbox(
+            "初期データの引き継ぎ元（任意）",
+            options=clone_options,
+            index=0,
+            key="clone_ds_select",
+            help="既存のデータセットを選択すると、その画像とアノテーションを新しいデータセット名へ丸ごと複製して保存します。",
+        )
+        if st.button("➕ 新規データセットを作成して切り替え", type="primary", use_container_width=True):
+            if not new_ds_name.strip():
+                st.warning("新しいデータセット名を入力してください。")
+            else:
+                clone_src = None if clone_choice.startswith("(") else clone_choice
+                res_sel = client.select_or_create_dataset(
+                    dataset_name=new_ds_name.strip(),
+                    clone_from=clone_src,
+                )
+                st.success(
+                    f"データセット `{res_sel['active_dataset']}` を作成し、アクティブに設定しました！"
+                )
+                st.rerun()
+
+    with ds_col3:
+        st.markdown("##### ③ データセット一覧・削除")
+        if all_datasets_meta:
+            df_cat = pd.DataFrame(
+                [
+                    {
+                        "Active": "✅" if d.get("is_active") else "",
+                        "名前": d["dataset_name"],
+                        "枚数": d.get("total_images", 0),
+                        "クラス": len(d.get("subfolder_classes", {})),
+                        "確定済": "済" if d.get("has_annotations") else "未",
+                    }
+                    for d in all_datasets_meta
+                ]
+            )
+            st.dataframe(df_cat, use_container_width=True, hide_index=True, height=140, key="phase1_cat_df")
+
+        if active_dataset_name != "default":
+            if st.button(f"🗑️ `{active_dataset_name}` を削除", use_container_width=True):
+                client.delete_dataset(active_dataset_name)
+                st.info(f"データセット `{active_dataset_name}` を削除し、`default` に戻しました。")
+                st.rerun()
+
+# Fetch active dataset details
+try:
+    ds_info = client.get_datasets(dataset_name=active_dataset_name)
+except Exception:
+    ds_info = {
+        "dataset_name": active_dataset_name,
+        "total_images": 0,
+        "subfolder_classes": {},
+        "detected_class_names": [],
+    }
+
+detected_classes_now: list[str] = ds_info.get("detected_class_names", [])
 
 # Section 1: Dataset Preparation (Folder Upload with Subfolder=Class Name OR Synthetic Generator)
-with st.expander("1. 検査画像データの準備（フォルダ一括アップロード［サブフォルダ名＝クラス名］ / 合成データ生成）", expanded=True):
+with st.expander(
+    f"1. 検査画像データの準備（対象データセット: `{active_dataset_name}` ｜ フォルダ一括アップロード / 合成データ生成）",
+    expanded=True,
+):
     sub_counts: dict[str, int] = ds_info.get("subfolder_classes", {})
-    if ds_info.get("total_images", 0) > 0:
-        st.info(
-            f"現在のデータセット登録枚数: **合計 {ds_info['total_images']} 枚** ｜ "
-            f"検出クラス（サブフォルダ内訳）: `{sub_counts if sub_counts else 'フラット配置'}`"
-        )
+    st.info(
+        f"📂 **現在のアクティブデータセット: `{active_dataset_name}`** ｜ "
+        f"登録枚数: **合計 {ds_info.get('total_images', 0)} 枚** ｜ "
+        f"検出クラス（サブフォルダ内訳）: `{sub_counts if sub_counts else '未登録 / フラット配置'}`"
+    )
 
     tab_upload, tab_synth = st.tabs(
         [
-            "📁 フォルダから画像をアップロード（サブフォルダ名 ＝ 学習クラス名）",
+            "📁 フォルダから画像をアップロード（サブフォルダ名 ＝ 初期クラス名）",
             "🧪 100:2 不均衡合成検査データの自動生成（動作確認用）",
         ]
     )
 
     with tab_upload:
         st.markdown(
-            """
-            **フォルダ構成のルール**:
-            親フォルダ内にクラスごとのサブフォルダ（例: `normal/`, `scratch/`, `stain/` や `OK/`, `打痕/`, `傷/` など）を入れてアップロードしてください。
-            **サブフォルダ名が自動的にクラス名として抽出**され、クラスタリング時の初期ラベルおよびフェーズ2（MS-Loss学習）のクラス名として使用できます。
+            f"""
+            **アップロード先データセット**: `{active_dataset_name}`
+            * 親フォルダ内にサブフォルダ（例: `nomal/` と `anomaly/`、または `normal/`, `scratch/`, `stain/` など）を入れてアップロードしてください。
+            * 他のデータセット（`{[n for n in dataset_names_list if n != active_dataset_name] or ['別名保存データセット']}`）の画像やマニフェストには一切影響しません。
             """
         )
         up_col1, up_col2 = st.columns([2, 1])
@@ -155,7 +271,6 @@ with st.expander("1. 検査画像データの準備（フォルダ一括アッ�
         with up_col1:
             uploaded_dir_files: list[Any] = []
             try:
-                # Streamlit >= 1.49 supports native directory picker via accept_multiple_files="directory"
                 res_dir = st.file_uploader(
                     "① 親フォルダを選択して一括アップロード（サブフォルダ構造を自動認識）",
                     type=["png", "jpg", "jpeg", "bmp", "webp", "tif", "tiff"],
@@ -186,9 +301,9 @@ with st.expander("1. 検査画像データの準備（フォルダ一括アッ�
                 help="フォルダ選択やZIPではなく、画像ファイル単体を直接選択した場合に割り当てるサブフォルダ（クラス）名です。",
             )
             clear_before_upload = st.checkbox(
-                "アップロード時に既存の登録画像をクリアする",
-                value=True,
-                help="サブフォルダを1つずつ複数回に分けて追加アップロードする場合はチェックを外してください。",
+                f"アップロード時に `{active_dataset_name}` 内の既存画像をクリアする",
+                value=False,
+                help="デフォルトOFF（サブフォルダ単位でマージ保存されます）。このデータセット内の既存フォルダを消去して入れ直したい場合のみチェックを入れてください。",
             )
 
         parsed_upload_items = (
@@ -204,15 +319,15 @@ with st.expander("1. 検査画像データの準備（フォルダ一括アッ�
                 preview_counts[c_name] = preview_counts.get(c_name, 0) + 1
 
             st.markdown(
-                f"**アップロード準備完了: 全 {len(parsed_upload_items)} 枚（検出されたサブフォルダクラス数: {len(preview_counts)}）**"
+                f"**アップロード準備完了 (`{active_dataset_name}`): 全 {len(parsed_upload_items)} 枚（検出クラス数: {len(preview_counts)}）**"
             )
             df_preview = pd.DataFrame(
                 [{"サブフォルダ名（クラス名）": k, "画像枚数": v} for k, v in sorted(preview_counts.items())]
             )
-            st.dataframe(df_preview, use_container_width=True, hide_index=True)
+            st.dataframe(df_preview, use_container_width=True, hide_index=True, key="upload_preview_df")
 
             if st.button(
-                f"📁 合計 {len(parsed_upload_items)} 枚の画像をサブフォルダクラス構造でアップロード",
+                f"📁 データセット `{active_dataset_name}` へ合計 {len(parsed_upload_items)} 枚をアップロード",
                 type="primary",
                 use_container_width=True,
             ):
@@ -224,50 +339,15 @@ with st.expander("1. 検査画像データの準備（フォルダ一括アッ�
                 up_res = client.upload_folder_images(
                     items=parsed_upload_items,
                     clear_existing=clear_before_upload,
+                    dataset_name=active_dataset_name,
                     batch_size=25,
                     progress_callback=_on_prog,
                 )
                 st.success(
-                    f"アップロード完了！ 合計 {up_res['total_images']} 枚 ｜ "
+                    f"データセット `{active_dataset_name}` へのアップロード完了！ 合計 {up_res['total_images']} 枚 ｜ "
                     f"クラス内訳: {up_res['subfolder_classes']}"
                 )
                 st.rerun()
-
-        # Quick direct annotation confirmation from subfolder names
-        detected_classes_now: list[str] = ds_info.get("detected_class_names", [])
-        if detected_classes_now:
-            st.divider()
-            st.markdown("##### サブフォルダ名をそのまま学習クラス名として設定")
-            q_col1, q_col2 = st.columns([2, 3])
-            default_norm = _detect_default_normal_class(detected_classes_now)
-            norm_idx = (
-                detected_classes_now.index(default_norm)
-                if default_norm in detected_classes_now
-                else 0
-            )
-            selected_normal_cls = q_col1.selectbox(
-                "良品（正常: label_id=0）として扱うサブフォルダ名",
-                options=detected_classes_now,
-                index=norm_idx,
-                key="direct_normal_cls_select",
-                help="ここで選択したサブフォルダが『良品（正常）』となり、それ以外の全サブフォルダが『不良モード（各サブフォルダ名）』として学習されます。",
-            )
-            if q_col2.button(
-                "サブフォルダ名をそのまま学習用クラス名として確定 (annotations.json 生成)",
-                use_container_width=True,
-                help="下の2段階クラスタリングで特徴空間を確認する前でも、サブフォルダ名をそのまま正解クラス名としてPhase 2学習用マニフェストに保存できます。",
-            ):
-                saved_direct = client.save_annotations_from_subfolders(
-                    {
-                        "normal_class_name": selected_normal_cls,
-                        "val_ratio": 0.25,
-                        "seed": 42,
-                    }
-                )
-                st.success(
-                    f"サブフォルダ名から学習用クラスを確定しました（全 {saved_direct['total_samples']} 件, "
-                    f"良品クラス=`{saved_direct['normal_class_name']}`）: クラス内訳 = {saved_direct['class_counts']}"
-                )
 
     with tab_synth:
         col_a, col_b, col_c, col_d, col_btn = st.columns([1, 1, 1, 1, 1.5])
@@ -276,10 +356,11 @@ with st.expander("1. 検査画像データの準備（フォルダ一括アッ�
         num_stain = col_c.number_input("不良B: 汚れ (Stain)", min_value=1, max_value=100, value=3, step=1)
         num_dent = col_d.number_input("不良C: 打痕 (Dent)", min_value=0, max_value=100, value=2, step=1)
 
-        if col_btn.button("合成検査データセットを生成", type="primary", use_container_width=True):
-            with st.spinner("100:2 不均衡合成検査画像を生成中..."):
+        if col_btn.button(f"`{active_dataset_name}` に合成データを生成", type="primary", use_container_width=True):
+            with st.spinner(f"データセット `{active_dataset_name}` に 100:2 合成検査画像を生成中..."):
                 res = client.generate_synthetic_dataset(
                     {
+                        "dataset_name": active_dataset_name,
                         "num_normal": int(num_normal),
                         "num_scratch": int(num_scratch),
                         "num_stain": int(num_stain),
@@ -289,12 +370,17 @@ with st.expander("1. 検査画像データの準備（フォルダ一括アッ�
                         "clear_existing": True,
                     }
                 )
-                st.success(f"合計 {res['total_generated']} 枚の検査画像を生成しました: {res['counts']}")
+                st.success(f"`{active_dataset_name}` に合計 {res['total_generated']} 枚を生成しました: {res['counts']}")
                 st.rerun()
 
-# Section 2: Trigger 2-Stage Clustering
-st.subheader("2. 既製モデル特徴抽出 ＆ 2段階密度分離クラスタリング (Step 1〜2)")
-c1, c2, c3, c4, c5 = st.columns(5)
+# Section 2: Trigger Anomaly-Only Clustering (Normal Fixed as Cluster 0)
+st.subheader(f"2. 既製モデル特徴抽出 ＆ 異常クラス自動細分化クラスタリング (対象: `{active_dataset_name}`)")
+st.caption(
+    "良品クラス（例: `nomal` / `normal`）は一切クラスタリングせずそのまま `Cluster 0` として固定し、"
+    "異常クラス（例: `anomaly`）の画像のみを PCA ＋ シルエットスコア最大化 K-means で複数の不良サブクラス（`Cluster 1 .. k*`）へ自動分割します。"
+)
+
+c1, c2, c3, c4, c5 = st.columns([1.3, 1.0, 1.3, 1.0, 1.1])
 backbone_name = c1.selectbox(
     "特徴抽出バックボーン (timm)",
     options=["efficientnet_b3", "vit_base_patch16_224", "resnet18", "lightweight_cnn"],
@@ -306,27 +392,45 @@ pooling_type = c2.selectbox(
     index=0,
     help="GeM または Avg+Max プーリングにより微小な局所傷・汚れの希釈を防ぎます。",
 )
-core_quantile = c3.slider(
-    "Stage 1 良品コア抽出分位 (τ_core)",
-    min_value=0.60,
-    max_value=0.95,
-    value=0.85,
-    step=0.05,
-)
-k_nn = c4.number_input("局所密度 k-NN 近傍数", min_value=3, max_value=50, value=15)
-max_k = c5.number_input("Stage 2 最大探索クラスタ数 (K_max)", min_value=3, max_value=15, value=6)
 
-if st.button("2段階クラスタリングを実行 (Stage 1: 良品コア分離 → Stage 2: テールPCA + シルエットK-means)", type="primary"):
+norm_candidates_for_cluster = detected_classes_now if detected_classes_now else ["normal", "nomal", "good"]
+default_norm_cluster = _detect_default_normal_class(norm_candidates_for_cluster)
+norm_cluster_idx = (
+    norm_candidates_for_cluster.index(default_norm_cluster)
+    if default_norm_cluster in norm_candidates_for_cluster
+    else 0
+)
+normal_class_for_cluster = c3.selectbox(
+    "良品クラス名（クラスタリングせず固定保持）",
+    options=norm_candidates_for_cluster,
+    index=norm_cluster_idx,
+    help="このサブフォルダの画像はクラスタリングせず、全件そのまま Cluster 0（良品）として固定します。",
+)
+max_k = c4.number_input(
+    "異常クラスの最大分割数 (K_max)",
+    min_value=2,
+    max_value=15,
+    value=6,
+    help="異常フォルダ内の画像のみを対象に k = 2 〜 K_max の範囲でシルエットスコアが最大となるクラスタ数 k* を自動選定します。",
+)
+use_pretrained_cluster = c5.checkbox("ImageNet事前学習重み", value=True)
+
+if st.button(
+    f"データセット `{active_dataset_name}` の異常クラス自動細分化クラスタリングを実行",
+    type="primary",
+):
     job = client.trigger_clustering(
         {
+            "dataset_name": active_dataset_name,
             "backbone_name": backbone_name,
             "pooling_type": pooling_type,
-            "core_quantile": float(core_quantile),
-            "k_nn": int(k_nn),
+            "normal_class_name": normal_class_for_cluster,
+            "core_quantile": 0.85,
+            "k_nn": 15,
             "max_k": int(max_k),
             "max_pca_dim": 64,
             "pca_variance": 0.95,
-            "pretrained": False,
+            "pretrained": bool(use_pretrained_cluster),
         }
     )
     job_id = job["job_id"]
@@ -344,28 +448,35 @@ if st.button("2段階クラスタリングを実行 (Stage 1: 良品コア分離
 
 # Section 3: Inspect Clusters & Confirm Pseudo-Multiclass Labels (Step 3)
 st.divider()
-st.subheader("3. クラスタリング結果の確認 ＆ 疑似多クラスラベル確定 (Step 3)")
+st.subheader(f"3. クラスタリング結果の確認 ＆ 疑似多クラスラベル確定 (対象: `{active_dataset_name}`)")
 
 try:
-    cluster_data = client.get_clusters()
+    cluster_data = client.get_clusters(dataset_name=active_dataset_name)
 except Exception:
     cluster_data = None
 
 if not cluster_data:
-    st.info("まだクラスタリング結果がありません。上の「2段階クラスタリングを実行」ボタンを押してください。")
+    st.info(
+        f"データセット `{active_dataset_name}` にはまだクラスタリング結果がありません。"
+        "上の「異常クラス自動細分化クラスタリングを実行」ボタンを押してください。"
+    )
 else:
+    norm_cls_in_res = cluster_data.get("normal_class_name", normal_class_for_cluster)
+
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("総サンプル数", cluster_data["total_samples"])
-    m2.metric("Stage 1: 良品コア抽出数 (Cluster 0)", cluster_data["normal_core_count"])
-    m3.metric("Stage 2: 低密度テール対象数", cluster_data["tail_count"])
-    m4.metric("自動選定された最適テール k*", cluster_data["best_tail_k"])
+    m2.metric(f"良品クラス固定数 (Cluster 0: `{norm_cls_in_res}`)", cluster_data["normal_core_count"])
+    m3.metric("異常クラスタリング対象数", cluster_data["tail_count"])
+    m4.metric("自動選定された異常分割クラス数 k*", cluster_data["best_tail_k"])
 
     items = cluster_data["items"]
     df_items = pd.DataFrame(items)
     df_items["x"] = df_items["preview_2d"].apply(lambda v: v[0])
     df_items["y"] = df_items["preview_2d"].apply(lambda v: v[1])
     df_items["cluster_str"] = df_items["cluster_id"].apply(
-        lambda cid: "Cluster 0 (Stage 1: Normal Core)" if cid == 0 else f"Cluster {cid} (Stage 2: Tail)"
+        lambda cid: f"Cluster 0 (良品固定: {norm_cls_in_res})"
+        if cid == 0
+        else f"Cluster {cid} (異常サブクラス {cid})"
     )
 
     chart_col1, chart_col2 = st.columns(2)
@@ -379,10 +490,10 @@ else:
                 df_sil,
                 x="k",
                 y="Silhouette Score",
-                title="Stage 2: テール領域 K-means シルエットスコア推移（最大値を自動選定）",
+                title="異常データ領域 K-means シルエットスコア推移（最大値 k* を自動選定）",
                 text_auto=".4f",
             )
-            st.plotly_chart(fig_sil, use_container_width=True)
+            st.plotly_chart(fig_sil, use_container_width=True, key="phase1_sil_chart")
 
     with chart_col2:
         fig_2d = px.scatter(
@@ -392,91 +503,87 @@ else:
             color="cluster_str",
             symbol="ground_truth_hint",
             hover_data=["file_name", "density_score", "ground_truth_hint"],
-            title="2D PCA 特徴空間プレビュー（Stage 1 良品コア vs Stage 2 テールクラスタ / 記号＝サブフォルダ名）",
+            title="2D PCA 特徴空間プレビュー（Cluster 0: 良品固定 vs Cluster 1..k*: 異常サブクラス）",
         )
-        st.plotly_chart(fig_2d, use_container_width=True)
+        st.plotly_chart(fig_2d, use_container_width=True, key="phase1_pca_2d_chart")
 
-    st.markdown("#### クラスタ単位のラベル割当（サブフォルダ名を自動反映）＆ スポットチェック")
+    st.markdown("#### クラスタ単位のラベル割当（良品は固定 / 異常は分割サブクラス化）")
 
-    # Dynamically assemble available class label options from uploaded subfolders + cluster hints + custom input
-    detected_from_clusters = [
-        str(x) for x in cluster_data.get("detected_classes", []) if x
-    ]
-    detected_from_dataset = [
-        str(x) for x in ds_info.get("detected_class_names", []) if x
-    ]
-    hint_values = [
-        str(x) for x in df_items["ground_truth_hint"].dropna().unique().tolist() if x
-    ]
+    suggested_map: dict[str, str] = cluster_data.get("suggested_cluster_labels", {})
+    detected_from_clusters = [str(x) for x in cluster_data.get("detected_classes", []) if x]
+    hint_values = [str(x) for x in df_items["ground_truth_hint"].dropna().unique().tolist() if x]
+    suggested_values = [str(v) for v in suggested_map.values() if v]
 
-    cfg_col1, cfg_col2, cfg_col3 = st.columns([1.5, 1.5, 2])
+    unique_clusters = sorted(df_items["cluster_id"].unique())
+    auto_subcluster_names = [f"anomaly_cluster_{cid}" for cid in unique_clusters if cid > 0]
+
+    cfg_col1, cfg_col2, cfg_col3 = st.columns([1.4, 1.6, 2.0])
     custom_labels_raw = cfg_col3.text_input(
-        "追加のカスタムクラス名（カンマ区切りで任意追加）",
+        "追加のカスタム不良クラス名（カンマ区切りで任意追加）",
         value="",
-        placeholder="例: defect_burr, defect_crack",
+        placeholder="例: broken_large, broken_small, contamination",
     )
     custom_labels = [x.strip() for x in custom_labels_raw.split(",") if x.strip()]
 
     dynamic_classes: list[str] = []
     for candidate in (
-        detected_from_dataset
+        [norm_cls_in_res]
+        + suggested_values
+        + auto_subcluster_names
+        + custom_labels
+        + detected_classes_now
         + detected_from_clusters
         + hint_values
-        + custom_labels
         + ["normal", "defect_scratch", "defect_stain", "defect_dent", "defect_other"]
     ):
         if candidate and candidate not in dynamic_classes:
             dynamic_classes.append(candidate)
 
-    default_normal_cls = _detect_default_normal_class(
-        detected_from_dataset or detected_from_clusters or dynamic_classes
-    )
     normal_cls_idx = (
-        dynamic_classes.index(default_normal_cls)
-        if default_normal_cls in dynamic_classes
-        else 0
+        dynamic_classes.index(norm_cls_in_res) if norm_cls_in_res in dynamic_classes else 0
     )
     normal_class_name = cfg_col1.selectbox(
         "良品（正常: label_id=0）として扱うクラス名",
         options=dynamic_classes,
         index=normal_cls_idx,
-        help="選択したクラス名が良品（label_id=0）となり、それ以外のクラス名が不良モード（label_id=1..C）としてPhase 2で学習されます。",
+        help="Cluster 0（良品）に割り当てるクラス名です（label_id=0, is_defect=False として固定されます）。",
     )
     use_subfolder_labels = cfg_col2.checkbox(
-        "各画像の元サブフォルダ名を優先してクラス名に適用する",
-        value=bool(detected_from_dataset or detected_from_clusters),
-        help="ONにすると、クラスタ内に他クラスの画像が混入していても、アップロード時のサブフォルダ名を各画像の学習クラス名として正確に維持します。",
+        "異常クラスタ分割を使わず、元のサブフォルダ名をそのまま適用する",
+        value=False,
+        help="通常はOFF（推奨）のままにしてください。OFFにすると、異常データが Cluster 1..k* の複数サブクラスに分かれた状態でフェーズ2の学習へ渡されます。",
     )
 
     cluster_labels: dict[str, str] = {}
-    unique_clusters = sorted(df_items["cluster_id"].unique())
 
     for cid in unique_clusters:
         sub_df = df_items[df_items["cluster_id"] == cid].sort_values("density_score")
         hints = sub_df["ground_truth_hint"].dropna().value_counts().to_dict()
-        dominant_hint = next(iter(hints.keys()), normal_class_name) if hints else (
-            normal_class_name if cid == 0 else dynamic_classes[min(1, len(dynamic_classes) - 1)]
-        )
-        default_idx = dynamic_classes.index(dominant_hint) if dominant_hint in dynamic_classes else 0
+
+        if cid == 0:
+            default_lbl = normal_class_name
+        else:
+            default_lbl = suggested_map.get(str(cid), f"anomaly_cluster_{cid}")
+
+        default_idx = dynamic_classes.index(default_lbl) if default_lbl in dynamic_classes else 0
 
         with st.container(border=True):
             top_c1, top_c2 = st.columns([2, 3])
             role_title = (
-                f"Cluster 0 — Stage 1 高密度良品コア ({len(sub_df)}枚) ※境界付近サンプルの抜き取りチェック"
+                f"Cluster 0 — 良品クラス固定 ({len(sub_df)}枚 / クラスタリング対象外)"
                 if cid == 0
-                else f"Cluster {cid} — Stage 2 低密度テールクラスタ ({len(sub_df)}枚)"
+                else f"Cluster {cid} — 異常データの自動分割サブクラス {cid} ({len(sub_df)}枚)"
             )
             top_c1.markdown(f"**{role_title}**")
-            top_c1.caption(f"サブフォルダ（クラス）内訳: {hints}")
+            top_c1.caption(f"元サブフォルダ内訳: {hints}")
             chosen_label = top_c2.selectbox(
-                f"Cluster {cid} の確定ラベル",
+                f"Cluster {cid} の確定クラス名",
                 options=dynamic_classes,
                 index=default_idx,
-                key=f"cluster_lbl_{cid}",
+                key=f"cluster_lbl_{active_dataset_name}_{cid}",
             )
             cluster_labels[str(cid)] = chosen_label
 
-            # Show up to 6 representative images (lowest density first for spot checking)
             sample_rows = sub_df.head(6).to_dict("records")
             img_cols = st.columns(min(6, max(1, len(sample_rows))))
             for idx, row in enumerate(sample_rows):
@@ -485,15 +592,15 @@ else:
                 if img_p.exists():
                     img_cols[idx].image(
                         Image.open(img_p),
-                        caption=f"[{sub_cls}] {row['file_name']}\n(density={row['density_score']:.3f})",
+                        caption=f"[{sub_cls}] {row['file_name']}\n(sim={row['density_score']:.3f})",
                         use_container_width=True,
                     )
                 else:
                     img_cols[idx].caption(f"[{sub_cls}] {row['file_name']}")
 
-    with st.expander("混入外れ値サンプルの個別ラベル上書き（任意）"):
+    with st.expander("個別サンプルのラベル手動上書き（任意）"):
         override_text = st.text_area(
-            "1行に1件 `ファイル名=クラス名` の形式で入力（例: `0001.png=scratch`）",
+            "1行に1件 `ファイル名=クラス名` の形式で入力（例: `0001.png=anomaly_cluster_2`）",
             value="",
             height=80,
         )
@@ -503,9 +610,13 @@ else:
                 k, v = line.split("=", 1)
                 sample_overrides[k.strip()] = v.strip()
 
-    if st.button("ラベルを確定してフェーズ2用マニフェスト (annotations.json) を保存", type="primary"):
+    if st.button(
+        f"ラベルを確定してデータセット `{active_dataset_name}` のマニフェスト (annotations.json) を保存",
+        type="primary",
+    ):
         saved = client.save_annotations(
             {
+                "dataset_name": active_dataset_name,
                 "cluster_labels": cluster_labels,
                 "sample_overrides": sample_overrides,
                 "normal_class_name": normal_class_name,
@@ -515,6 +626,6 @@ else:
             }
         )
         st.success(
-            f"アノテーション確定完了（全 {saved['total_samples']} 件, 良品クラス=`{saved.get('normal_class_name', normal_class_name)}`）: "
+            f"データセット `{active_dataset_name}` のアノテーション確定完了（全 {saved['total_samples']} 件, 良品クラス=`{saved.get('normal_class_name', normal_class_name)}`）: "
             f"学習クラス内訳 = {saved['class_counts']} ｜ クラスIDマップ = {saved['class_map']}"
         )

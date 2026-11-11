@@ -22,9 +22,38 @@ class BackendApiClient:
             resp.raise_for_status()
             return resp.json()
 
-    def get_datasets(self) -> dict[str, Any]:
+    def get_datasets_catalog(self) -> dict[str, Any]:
+        """List all saved datasets and the currently active dataset."""
         with httpx.Client(timeout=15.0) as client:
-            resp = client.get(f"{self.base_url}/api/v1/datasets")
+            resp = client.get(f"{self.base_url}/api/v1/datasets/catalog")
+            resp.raise_for_status()
+            return resp.json()
+
+    def select_or_create_dataset(
+        self,
+        dataset_name: str,
+        clone_from: str | None = None,
+    ) -> dict[str, Any]:
+        """Switch active dataset or create/clone a new named dataset."""
+        payload: dict[str, Any] = {"dataset_name": dataset_name}
+        if clone_from:
+            payload["clone_from"] = clone_from
+        with httpx.Client(timeout=30.0) as client:
+            resp = client.post(f"{self.base_url}/api/v1/datasets/select", json=payload)
+            resp.raise_for_status()
+            return resp.json()
+
+    def delete_dataset(self, dataset_name: str) -> dict[str, Any]:
+        """Delete a named dataset or clear `'default'` dataset."""
+        with httpx.Client(timeout=20.0) as client:
+            resp = client.delete(f"{self.base_url}/api/v1/datasets/{dataset_name}")
+            resp.raise_for_status()
+            return resp.json()
+
+    def get_datasets(self, dataset_name: str | None = None) -> dict[str, Any]:
+        params = {"dataset_name": dataset_name} if dataset_name else {}
+        with httpx.Client(timeout=15.0) as client:
+            resp = client.get(f"{self.base_url}/api/v1/datasets", params=params)
             resp.raise_for_status()
             return resp.json()
 
@@ -39,7 +68,8 @@ class BackendApiClient:
     def upload_folder_images(
         self,
         items: list[dict[str, str]],
-        clear_existing: bool = True,
+        clear_existing: bool = False,
+        dataset_name: str | None = None,
         batch_size: int = 25,
         progress_callback: Any | None = None,
     ) -> dict[str, Any]:
@@ -52,10 +82,12 @@ class BackendApiClient:
         with httpx.Client(timeout=60.0) as client:
             for start_idx in range(0, total, batch_size):
                 chunk = items[start_idx : start_idx + batch_size]
-                payload = {
+                payload: dict[str, Any] = {
                     "items": chunk,
                     "clear_existing": bool(clear_existing and start_idx == 0),
                 }
+                if dataset_name:
+                    payload["dataset_name"] = dataset_name
                 resp = client.post(f"{self.base_url}/api/v1/datasets/upload-folder", json=payload)
                 resp.raise_for_status()
                 last_result = resp.json()
@@ -79,15 +111,17 @@ class BackendApiClient:
             resp.raise_for_status()
             return resp.json()
 
-    def get_clusters(self) -> dict[str, Any]:
+    def get_clusters(self, dataset_name: str | None = None) -> dict[str, Any]:
+        params = {"dataset_name": dataset_name} if dataset_name else {}
         with httpx.Client(timeout=15.0) as client:
-            resp = client.get(f"{self.base_url}/api/v1/clusters")
+            resp = client.get(f"{self.base_url}/api/v1/clusters", params=params)
             resp.raise_for_status()
             return resp.json()
 
-    def get_annotations(self) -> dict[str, Any]:
+    def get_annotations(self, dataset_name: str | None = None) -> dict[str, Any]:
+        params = {"dataset_name": dataset_name} if dataset_name else {}
         with httpx.Client(timeout=15.0) as client:
-            resp = client.get(f"{self.base_url}/api/v1/annotations")
+            resp = client.get(f"{self.base_url}/api/v1/annotations", params=params)
             resp.raise_for_status()
             return resp.json()
 
@@ -109,26 +143,56 @@ class BackendApiClient:
             resp.raise_for_status()
             return resp.json()
 
-    def list_evaluations(self) -> dict[str, Any]:
+    def list_sessions(self, dataset_name: str | None = None) -> dict[str, Any]:
+        params = {"dataset_name": dataset_name} if dataset_name else {}
         with httpx.Client(timeout=15.0) as client:
-            resp = client.get(f"{self.base_url}/api/v1/evaluations")
+            resp = client.get(f"{self.base_url}/api/v1/sessions", params=params)
             resp.raise_for_status()
             return resp.json()
 
-    def get_epoch_evaluation(self, epoch: int, tau_sim: float = 0.0) -> dict[str, Any]:
+    def get_session_detail(self, session_id: str) -> dict[str, Any]:
+        with httpx.Client(timeout=20.0) as client:
+            resp = client.get(f"{self.base_url}/api/v1/sessions/{session_id}")
+            resp.raise_for_status()
+            return resp.json()
+
+    def list_evaluations(self, session_id: str | None = None) -> dict[str, Any]:
+        params = {"session_id": session_id} if session_id else {}
+        with httpx.Client(timeout=15.0) as client:
+            resp = client.get(f"{self.base_url}/api/v1/evaluations", params=params)
+            resp.raise_for_status()
+            return resp.json()
+
+    def get_epoch_evaluation(
+        self,
+        epoch: int,
+        tau_sim: float = 0.0,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"tau_sim": tau_sim}
+        if session_id:
+            params["session_id"] = session_id
         with httpx.Client(timeout=30.0) as client:
             resp = client.get(
                 f"{self.base_url}/api/v1/evaluations/{epoch}",
-                params={"tau_sim": tau_sim},
+                params=params,
             )
             resp.raise_for_status()
             return resp.json()
 
-    def run_single_inference(self, image_path: str, tau_sim: float = 0.0) -> dict[str, Any]:
+    def run_single_inference(
+        self,
+        image_path: str,
+        tau_sim: float = 0.0,
+        session_id: str | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {"image_path": image_path, "tau_sim": tau_sim}
+        if session_id:
+            payload["session_id"] = session_id
         with httpx.Client(timeout=30.0) as client:
             resp = client.post(
                 f"{self.base_url}/api/v1/inference",
-                json={"image_path": image_path, "tau_sim": tau_sim},
+                json=payload,
             )
             resp.raise_for_status()
             return resp.json()

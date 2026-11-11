@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 
 
 class SyntheticDatasetRequest(BaseModel):
+    dataset_name: str | None = Field(default=None)
     num_normal: int = Field(default=100, ge=10, le=2000)
     num_scratch: int = Field(default=3, ge=1, le=200)
     num_stain: int = Field(default=3, ge=1, le=200)
@@ -18,17 +19,28 @@ class SyntheticDatasetRequest(BaseModel):
 
 
 class ClusteringJobRequest(BaseModel):
+    dataset_name: str | None = Field(default=None)
     backbone_name: str = Field(default="efficientnet_b3")
     pooling_type: Literal["gap", "gem", "avg_max"] = Field(default="gem")
+    normal_class_name: str = Field(
+        default="normal",
+        description="Subfolder/class name for Normal samples (kept fixed as Cluster 0 without clustering).",
+    )
     core_quantile: float = Field(default=0.85, ge=0.50, le=0.97)
     k_nn: int = Field(default=15, ge=2, le=100)
     max_k: int = Field(default=8, ge=2, le=20)
     max_pca_dim: int = Field(default=64, ge=2, le=256)
     pca_variance: float = Field(default=0.95, ge=0.50, le=0.999)
-    pretrained: bool = Field(default=False)
+    pretrained: bool = Field(default=True)
 
 
 class TrainingJobRequest(BaseModel):
+    dataset_name: str | None = Field(default=None)
+    session_label: str | None = Field(
+        default=None,
+        description="Optional user memo/label for this training session.",
+    )
+    loss_type: Literal["multi_proxy_anchor", "ms_loss"] = Field(default="multi_proxy_anchor")
     backbone_name: str = Field(default="efficientnet_b3")
     pooling_type: Literal["gap", "gem", "avg_max"] = Field(default="gem")
     pretrained: bool = Field(default=False)
@@ -38,6 +50,13 @@ class TrainingJobRequest(BaseModel):
     batch_size: int = Field(default=32, ge=4, le=256)
     learning_rate: float = Field(default=2e-3, gt=0.0, le=1.0)
     tau_sim: float = Field(default=0.0, ge=-1.0, le=1.0)
+    num_normal_proxies: int = Field(default=4, ge=1, le=12)
+    hard_anomaly_boost: float = Field(default=3.0, ge=1.0, le=20.0)
+    class_balance_beta: float = Field(default=0.99, ge=0.50, le=0.9999)
+    enable_boundary_aug: bool = Field(default=True)
+    mixup_alpha_min: float = Field(default=0.80, ge=0.55, le=0.95)
+    mixup_alpha_max: float = Field(default=0.90, ge=0.60, le=0.97)
+    nab_normal_ratio: float = Field(default=0.50, ge=0.25, le=0.75)
     top_k_mode: Literal["count", "ratio"] = Field(default="count")
     top_k_initial: float = Field(default=30.0, gt=0.0)
     top_k_final: float = Field(default=20.0, gt=0.0)
@@ -51,12 +70,16 @@ class TrainingJobRequest(BaseModel):
 class SingleInferenceRequest(BaseModel):
     image_path: str
     tau_sim: float = Field(default=0.0, ge=-1.0, le=1.0)
+    session_id: str | None = Field(default=None)
 
 
 class JobStatusResponse(BaseModel):
     job_id: str
     job_type: Literal["clustering", "training"]
     status: Literal["queued", "running", "completed", "failed"]
+    dataset_name: str = "default"
+    session_id: str | None = None
+    session_number: int | None = None
     progress: float = 0.0
     current_epoch: int = 0
     total_epochs: int = 0
