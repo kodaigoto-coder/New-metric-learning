@@ -97,7 +97,11 @@ def _parse_uploaded_objects(
     has_shallow_two_part = False
     for rpath, _ in raw_entries:
         parts = [p for p in rpath.replace("\\", "/").strip("/").split("/") if p and p != "."]
+        if not parts:
+            continue
         if any(p.startswith(".") or p == "__MACOSX" or p == "ground_truth" for p in parts):
+            continue
+        if Path(parts[-1]).suffix.lower() not in _VALID_IMAGE_EXTS:
             continue
         if len(parts) >= 3:
             deep_roots.add(parts[0])
@@ -126,12 +130,11 @@ def _parse_uploaded_objects(
 
 
 def _activate_dataset_and_sync_state(target_ds: str, clone_from: str | None = None) -> dict[str, Any]:
-    """Switch the backend active dataset and synchronize all Streamlit session_state selectors."""
+    """Switch the backend active dataset and mark session_state selectors for pre-widget sync on next run."""
     res = client.select_or_create_dataset(dataset_name=target_ds, clone_from=clone_from)
-    actual_ds = res.get("active_dataset", target_ds)
-    st.session_state["_synced_active_ds"] = actual_ds
-    st.session_state["sidebar_ds_select"] = actual_ds
-    st.session_state["main_ds_selector"] = actual_ds
+    # Do NOT assign to already-instantiated widget keys (`sidebar_ds_select`, `main_ds_selector`) here;
+    # resetting `_synced_active_ds` triggers pre-widget synchronization at the top of the rerun.
+    st.session_state["_synced_active_ds"] = ""
     return res
 
 
@@ -307,22 +310,27 @@ with st.expander(
 
         with up_col1:
             uploaded_dir_files: list[Any] = []
-            try:
-                res_dir = st.file_uploader(
-                    "① フォルダを選択して一括アップロード（直上の親サブフォルダ名を自動認識）",
-                    type=["png", "jpg", "jpeg", "bmp", "webp", "tif", "tiff"],
-                    accept_multiple_files="directory",
-                    key=f"folder_dir_uploader_{active_dataset_name}",
-                )
-                if res_dir:
-                    uploaded_dir_files.extend(res_dir if isinstance(res_dir, list) else [res_dir])
-            except Exception:
-                pass
+            # Note: `type=None` is critical for `accept_multiple_files="directory"` in Streamlit 1.67+.
+            # When `type=[...]` is passed, Streamlit's `FileUploaderSerde.deserialize()` runs
+            # `enforce_filename_restriction()` on every file in the directory tree and throws
+            # `StreamlitInvalidFileExtensionError` if `.DS_Store` (macOS) or `readme.txt` / `license.txt`
+            # (MVTec AD) exists anywhere in the selected folder. We filter valid images in Python below.
+            res_dir = st.file_uploader(
+                "① フォルダを選択して一括アップロード（直上の親サブフォルダ名を自動認識・選択と同時に自動保存）",
+                type=None,
+                accept_multiple_files="directory",
+                max_upload_size=2000,
+                key=f"folder_dir_uploader_{active_dataset_name}",
+                help="親フォルダ（例: bottle, transistor/test）やクラス別フォルダ（例: nomal, anomaly）を選択すると、.DS_Store や ground_truth を自動除外してデータセットへ即時保存します。",
+            )
+            if res_dir:
+                uploaded_dir_files.extend(res_dir if isinstance(res_dir, list) else [res_dir])
 
             res_zip_or_multi = st.file_uploader(
-                "② または ZIP圧縮フォルダ (.zip) / 単一クラスの複数画像を選択",
-                type=["zip", "png", "jpg", "jpeg", "bmp", "webp", "tif", "tiff"],
+                "② または ZIP圧縮フォルダ (.zip) / 単一クラスの複数画像を選択（選択と同時に自動保存）",
+                type=None,
                 accept_multiple_files=True,
+                max_upload_size=2000,
                 key=f"folder_zip_or_multi_uploader_{active_dataset_name}",
                 help="親フォルダを圧縮した .zip ファイル、または右の『単発画像選択時のクラス名』へ登録したい複数画像を選択できます。",
             )
@@ -344,6 +352,15 @@ with st.expander(
                 key=f"clear_before_up_{active_dataset_name}",
                 help="通常はOFF（既存サブフォルダにマージ追記）のままにしてください。",
             )
+            auto_save_on_select = st.checkbox(
+                "フォルダ／ファイル選択時に自動でデータセットへ即時保存する",
+                value=True,
+                key=f"auto_save_up_{active_dataset_name}",
+                help="ON（推奨）にすると、左のアップローダーでフォルダや画像を選択した瞬間にサーバーのデータセットへ自動保存されます。",
+            )
+
+        if st.session_state.get("_last_upload_success_msg"):
+            st.success(st.session_state.pop("_last_upload_success_msg"))
 
         parsed_upload_items = (
             _parse_uploaded_objects(uploaded_dir_files, fallback_class=fallback_cls_name)
@@ -351,23 +368,71 @@ with st.expander(
             else []
         )
 
+        if uploaded_dir_files and not parsed_upload_items:
+            st.warning(
+                "選択されたフォルダ／ファイル内に有効な画像ファイル (`.png`, `.jpg`, `.jpeg`, `.bmp`, `.webp`, `.tif`, `.tiff`) "
+                "が見つかりませんでした（`ground_truth` や隠しファイルは自動除外されます）。"
+            )
+
         if parsed_upload_items:
             preview_counts: dict[str, int] = {}
             for item in parsed_upload_items:
                 c_name = item["class_name"]
                 preview_counts[c_name] = preview_counts.get(c_name, 0) + 1
 
+            upload_batch_sig = (
+                active_dataset_name,
+                fallback_cls_name.strip() or "normal",
+                bool(clear_before_upload),
+                tuple(
+                    (
+                        str(getattr(uf, "file_id", getattr(uf, "name", ""))),
+                        str(getattr(uf, "name", "")),
+                        int(getattr(uf, "size", 0)),
+                    )
+                    for uf in uploaded_dir_files
+                ),
+            )
+            already_auto_saved = st.session_state.get("_last_auto_uploaded_sig") == upload_batch_sig
+
+            # Automatically persist newly selected folder/files immediately to prevent the 2-step upload trap
+            if auto_save_on_select and not already_auto_saved:
+                prog = st.progress(0.0, text=f"データセット `{active_dataset_name}` へ画像を自動保存中...")
+
+                def _on_auto_prog(done: int, total: int) -> None:
+                    prog.progress(done / max(1, total), text=f"自動保存中... ({done}/{total} 枚)")
+
+                up_res = client.upload_folder_images(
+                    items=parsed_upload_items,
+                    clear_existing=clear_before_upload,
+                    dataset_name=active_dataset_name,
+                    batch_size=25,
+                    progress_callback=_on_auto_prog,
+                )
+                st.session_state["_last_auto_uploaded_sig"] = upload_batch_sig
+                st.session_state["_last_upload_success_msg"] = (
+                    f"✅ データセット `{active_dataset_name}` へのアップロード保存が完了しました！ "
+                    f"（今回保存: {len(parsed_upload_items)} 枚 ｜ データセット合計: {up_res['total_images']} 枚 ｜ "
+                    f"サブフォルダ内訳: {up_res['subfolder_classes']}）"
+                )
+                st.rerun()
+
             st.markdown(
-                f"**アップロード準備完了 (`{active_dataset_name}`): 全 {len(parsed_upload_items)} 枚（検出サブフォルダクラス数: {len(preview_counts)}）**"
+                f"**選択中のアップロードデータ (`{active_dataset_name}`): 全 {len(parsed_upload_items)} 枚（検出サブフォルダクラス数: {len(preview_counts)}）**"
             )
             df_preview = pd.DataFrame(
                 [{"サブフォルダ名（クラス名）": k, "画像枚数": v} for k, v in sorted(preview_counts.items())]
             )
             st.dataframe(df_preview, use_container_width=True, hide_index=True, key="upload_preview_df")
 
+            btn_label = (
+                f"🔄 選択中の {len(parsed_upload_items)} 枚をデータセット `{active_dataset_name}` へ再保存する（保存済み）"
+                if already_auto_saved
+                else f"📁 データセット `{active_dataset_name}` へ合計 {len(parsed_upload_items)} 枚をアップロード保存"
+            )
             if st.button(
-                f"📁 データセット `{active_dataset_name}` へ合計 {len(parsed_upload_items)} 枚をアップロード保存",
-                type="primary",
+                btn_label,
+                type="secondary" if already_auto_saved else "primary",
                 use_container_width=True,
             ):
                 prog = st.progress(0.0, text="画像をサーバーへアップロード中...")
@@ -382,8 +447,9 @@ with st.expander(
                     batch_size=25,
                     progress_callback=_on_prog,
                 )
-                st.success(
-                    f"データセット `{active_dataset_name}` へのアップロード完了！ 合計 {up_res['total_images']} 枚 ｜ "
+                st.session_state["_last_auto_uploaded_sig"] = upload_batch_sig
+                st.session_state["_last_upload_success_msg"] = (
+                    f"✅ データセット `{active_dataset_name}` へのアップロード完了！ 合計 {up_res['total_images']} 枚 ｜ "
                     f"サブフォルダ内訳: {up_res['subfolder_classes']}"
                 )
                 st.rerun()
@@ -536,7 +602,13 @@ max_k = c4.number_input(
 )
 use_pretrained_cluster = c5.checkbox("ImageNet事前学習重み", value=True)
 
-if len(detected_classes_now) == 1:
+total_imgs_now = int(ds_info.get("total_images", 0))
+if total_imgs_now == 0:
+    st.info(
+        f"💡 現在データセット `{active_dataset_name}` には画像が登録されていません（0枚）。"
+        "上の「1. 検査画像データの登録」からフォルダまたはZIP／画像を選択すると自動で保存されます。"
+    )
+elif len(detected_classes_now) == 1:
     st.warning(
         f"⚠️ 現在 `{active_dataset_name}` にはサブフォルダ `{detected_classes_now[0]}` の1種類しか登録されていません。"
         "この状態でクラスタリングを実行すると、単一フォルダ用の密度フォールバック（下位15%を仮の異常クラスタに分割）が作動します。"
@@ -544,8 +616,9 @@ if len(detected_classes_now) == 1:
     )
 
 if st.button(
-    f"データセット `{active_dataset_name}` の異常クラス自動細分化クラスタリングを実行",
+    f"データセット `{active_dataset_name}` の異常クラス自動細分化クラスタリングを実行（現在 {total_imgs_now} 枚）",
     type="primary",
+    disabled=(total_imgs_now < 3),
 ):
     job = client.trigger_clustering(
         {

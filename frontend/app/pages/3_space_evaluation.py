@@ -278,7 +278,6 @@ else:
         if st.button("◀ Epoch -1", use_container_width=True, disabled=(cur_ep_idx <= 0)):
             new_ep = epoch_numbers[cur_ep_idx - 1]
             st.session_state["step6_selected_epoch"] = new_ep
-            st.session_state["step6_epoch_dropdown"] = new_ep
             st.rerun()
 
     with ctrl_c2:
@@ -294,14 +293,12 @@ else:
         if st.button("Epoch +1 ▶", use_container_width=True, disabled=(cur_ep_idx >= len(epoch_numbers) - 1)):
             new_ep = epoch_numbers[cur_ep_idx + 1]
             st.session_state["step6_selected_epoch"] = new_ep
-            st.session_state["step6_epoch_dropdown"] = new_ep
             st.rerun()
 
     with ctrl_c4:
         st.write("")
         if st.button(f"★ Best (Ep {default_ep_val})", use_container_width=True):
             st.session_state["step6_selected_epoch"] = default_ep_val
-            st.session_state["step6_epoch_dropdown"] = default_ep_val
             st.rerun()
 
     selected_epoch = int(st.session_state["step6_selected_epoch"])

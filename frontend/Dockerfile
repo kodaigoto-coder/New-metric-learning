@@ -17,4 +17,4 @@ COPY app /app/app
 
 EXPOSE 18501
 
-CMD ["streamlit", "run", "app/main.py", "--server.address=0.0.0.0", "--server.port=18501", "--server.headless=true"]
+CMD ["streamlit", "run", "app/main.py", "--server.address=0.0.0.0", "--server.port=18501", "--server.headless=true", "--server.maxUploadSize=2000"]

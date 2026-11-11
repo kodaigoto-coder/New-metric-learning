@@ -132,12 +132,8 @@ if (
 def _on_phase2_ds_change() -> None:
     chosen = st.session_state.get("phase2_sidebar_ds_select")
     if chosen and chosen != st.session_state.get("_synced_active_ds"):
-        res = client.select_or_create_dataset(dataset_name=str(chosen))
-        actual = res.get("active_dataset", str(chosen))
-        st.session_state["_synced_active_ds"] = actual
-        st.session_state["phase2_sidebar_ds_select"] = actual
-        st.session_state["sidebar_ds_select"] = actual
-        st.session_state["main_ds_selector"] = actual
+        client.select_or_create_dataset(dataset_name=str(chosen))
+        st.session_state["_synced_active_ds"] = ""
 
 
 with st.sidebar:
