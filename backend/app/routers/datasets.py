@@ -21,9 +21,11 @@ from app.config import BackendConfig, sanitize_identifier
 from app.schemas.api_models import (
     AnnotationSubmissionRequest,
     DatasetSelectRequest,
+    DirectAnnotationsEditorRequest,
     DirectSubfolderAnnotationRequest,
     FolderUploadRequest,
     GenerateSyntheticRequest,
+    SubfolderClassRenameRequest,
 )
 
 router = APIRouter(prefix="/api/v1", tags=["datasets-annotations"])
@@ -441,6 +443,22 @@ def save_annotations(req: AnnotationSubmissionRequest) -> dict[str, Any]:
             lbl = req.sample_overrides[fname]
         resolved_labels.append(lbl.strip() or req.normal_class_name)
 
+    # Persist updated suggested_cluster_labels into clustering_result.json so UI remembers user choices
+    try:
+        updated_suggested = dict(cluster_data.get("suggested_cluster_labels", {}))
+        for cid_k, cid_lbl in req.cluster_labels.items():
+            if cid_lbl and cid_lbl.strip():
+                updated_suggested[str(cid_k)] = cid_lbl.strip()
+        cluster_data["suggested_cluster_labels"] = updated_suggested
+        cluster_data["normal_class_name"] = req.normal_class_name.strip() or "normal"
+        for i, it in enumerate(raw_items):
+            it["suggested_label"] = resolved_labels[i]
+        tmp_c = clustering_path.with_suffix(".json.tmp")
+        tmp_c.write_text(json.dumps(cluster_data, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(tmp_c, clustering_path)
+    except Exception:
+        pass
+
     return _build_and_save_annotations_manifest(
         dataset_name=target_ds,
         raw_items=raw_items,
@@ -498,3 +516,260 @@ def save_annotations_from_subfolders(req: DirectSubfolderAnnotationRequest) -> d
         val_ratio=req.val_ratio,
         seed=req.seed,
     )
+
+
+@router.post("/datasets/{dataset_name}/classes/rename")
+def rename_or_merge_subfolder_class(
+    dataset_name: str, req: SubfolderClassRenameRequest
+) -> dict[str, Any]:
+    """Rename or merge an existing subfolder class (`raw/<old>` -> `raw/<new>`) and sync manifests."""
+    target_ds = sanitize_identifier(dataset_name, fallback=BackendConfig.get_active_dataset())
+    raw_dir = BackendConfig.raw_dir(target_ds)
+    manifests_dir = BackendConfig.manifests_dir(target_ds)
+
+    old_cls = _sanitize_name(req.old_class_name, fallback="")
+    new_cls = _sanitize_name(req.new_class_name, fallback="")
+    if not old_cls or not new_cls:
+        raise HTTPException(status_code=400, detail="Both old_class_name and new_class_name are required.")
+    if old_cls == new_cls:
+        return _describe_single_dataset(target_ds, BackendConfig.get_active_dataset())
+
+    old_dir = raw_dir / old_cls
+    new_dir = raw_dir / new_cls
+    moved_paths: dict[str, str] = {}
+
+    if old_dir.exists() and old_dir.is_dir():
+        new_dir.mkdir(parents=True, exist_ok=True)
+        for src_p in sorted(old_dir.iterdir()):
+            if not src_p.is_file():
+                continue
+            dest_p = new_dir / src_p.name
+            if dest_p.exists():
+                stem = src_p.stem
+                ext = src_p.suffix
+                dest_p = new_dir / f"{old_cls}_{stem}{ext}"
+            shutil.move(str(src_p), str(dest_p))
+            moved_paths[str(src_p)] = str(dest_p)
+        shutil.rmtree(old_dir, ignore_errors=True)
+
+    # Sync clustering_result.json if present
+    clustering_path = manifests_dir / "clustering_result.json"
+    if clustering_path.exists():
+        try:
+            c_data = json.loads(clustering_path.read_text(encoding="utf-8"))
+            if c_data.get("normal_class_name") == old_cls:
+                c_data["normal_class_name"] = new_cls
+            det = [new_cls if c == old_cls else c for c in c_data.get("detected_classes", [])]
+            c_data["detected_classes"] = sorted(set(det))
+            sugg = c_data.get("suggested_cluster_labels", {})
+            for k, v in list(sugg.items()):
+                if v == old_cls:
+                    sugg[k] = new_cls
+            for it in c_data.get("items", []):
+                old_p = str(it.get("image_path", ""))
+                if old_p in moved_paths:
+                    it["image_path"] = moved_paths[old_p]
+                    it["file_name"] = Path(moved_paths[old_p]).name
+                if it.get("subfolder_class") == old_cls:
+                    it["subfolder_class"] = new_cls
+                if it.get("ground_truth_hint") == old_cls:
+                    it["ground_truth_hint"] = new_cls
+                if it.get("suggested_label") == old_cls:
+                    it["suggested_label"] = new_cls
+            tmp_c = clustering_path.with_suffix(".json.tmp")
+            tmp_c.write_text(json.dumps(c_data, ensure_ascii=False, indent=2), encoding="utf-8")
+            os.replace(tmp_c, clustering_path)
+        except Exception:
+            pass
+
+    # Sync annotations.json if present
+    ann_path = manifests_dir / "annotations.json"
+    if ann_path.exists():
+        try:
+            a_data = json.loads(ann_path.read_text(encoding="utf-8"))
+            norm_cls = a_data.get("normal_class_name", "normal")
+            if norm_cls == old_cls:
+                norm_cls = new_cls
+            raw_items: list[dict[str, Any]] = []
+            resolved_labels: list[str] = []
+            for it in a_data.get("items", []):
+                old_p = str(it.get("image_path", ""))
+                new_p = moved_paths.get(old_p, old_p)
+                lbl = str(it.get("label_name", norm_cls))
+                if lbl == old_cls:
+                    lbl = new_cls
+                raw_items.append(
+                    {
+                        "image_path": new_p,
+                        "file_name": Path(new_p).name,
+                        "cluster_id": int(it.get("cluster_id", 0)),
+                    }
+                )
+                resolved_labels.append(lbl)
+            _build_and_save_annotations_manifest(
+                dataset_name=target_ds,
+                raw_items=raw_items,
+                resolved_labels=resolved_labels,
+                normal_class_name=norm_cls,
+                val_ratio=0.25,
+                seed=42,
+            )
+        except Exception:
+            pass
+
+    return _describe_single_dataset(target_ds, BackendConfig.get_active_dataset())
+
+
+@router.delete("/datasets/{dataset_name}/classes/{class_name}")
+def delete_subfolder_class(dataset_name: str, class_name: str) -> dict[str, Any]:
+    """Delete a single subfolder class (`raw/<class_name>`) from a dataset and update manifests."""
+    target_ds = sanitize_identifier(dataset_name, fallback=BackendConfig.get_active_dataset())
+    raw_dir = BackendConfig.raw_dir(target_ds)
+    manifests_dir = BackendConfig.manifests_dir(target_ds)
+
+    safe_cls = _sanitize_name(class_name, fallback="")
+    if not safe_cls:
+        raise HTTPException(status_code=400, detail="Invalid class_name.")
+
+    cls_dir = raw_dir / safe_cls
+    if cls_dir.exists() and cls_dir.is_dir():
+        shutil.rmtree(cls_dir, ignore_errors=True)
+
+    # Remove deleted files from annotations.json if present
+    ann_path = manifests_dir / "annotations.json"
+    if ann_path.exists():
+        try:
+            a_data = json.loads(ann_path.read_text(encoding="utf-8"))
+            norm_cls = a_data.get("normal_class_name", "normal")
+            kept_items = [
+                it
+                for it in a_data.get("items", [])
+                if Path(str(it.get("image_path", ""))).exists()
+            ]
+            if len(kept_items) >= 4:
+                _build_and_save_annotations_manifest(
+                    dataset_name=target_ds,
+                    raw_items=kept_items,
+                    resolved_labels=[str(it.get("label_name", norm_cls)) for it in kept_items],
+                    normal_class_name=norm_cls,
+                    val_ratio=0.25,
+                    seed=42,
+                )
+            else:
+                ann_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    return _describe_single_dataset(target_ds, BackendConfig.get_active_dataset())
+
+
+@router.post("/annotations/direct-update")
+def direct_update_annotations(req: DirectAnnotationsEditorRequest) -> dict[str, Any]:
+    """Save per-image edited labels from the interactive UI table directly into `annotations.json` (and optionally `raw/<label_name>/`)."""
+    target_ds = (
+        sanitize_identifier(req.dataset_name, fallback=BackendConfig.get_active_dataset())
+        if req.dataset_name
+        else BackendConfig.get_active_dataset()
+    )
+    if not req.items:
+        raise HTTPException(status_code=400, detail="No annotation items provided.")
+
+    raw_dir = BackendConfig.raw_dir(target_ds)
+    manifests_dir = BackendConfig.manifests_dir(target_ds)
+    norm_cls = _sanitize_name(req.normal_class_name, fallback="normal")
+
+    updated_raw_items: list[dict[str, Any]] = []
+    resolved_labels: list[str] = []
+    explicit_splits: list[str] = []
+    moved_paths: dict[str, str] = {}
+
+    for row in req.items:
+        clean_lbl = _sanitize_name(row.label_name, fallback=norm_cls)
+        cur_p = Path(row.image_path)
+        final_p = cur_p
+
+        if req.sync_raw_subfolders and cur_p.exists():
+            target_cls_dir = raw_dir / clean_lbl
+            target_cls_dir.mkdir(parents=True, exist_ok=True)
+            if cur_p.parent.resolve() != target_cls_dir.resolve():
+                dest_p = target_cls_dir / cur_p.name
+                if dest_p.exists() and dest_p.resolve() != cur_p.resolve():
+                    dest_p = target_cls_dir / f"{cur_p.parent.name}_{cur_p.name}"
+                shutil.move(str(cur_p), str(dest_p))
+                moved_paths[str(cur_p)] = str(dest_p)
+                final_p = dest_p
+
+        updated_raw_items.append(
+            {
+                "image_path": str(final_p),
+                "file_name": final_p.name,
+                "cluster_id": 0 if clean_lbl == norm_cls else max(1, int(row.cluster_id)),
+            }
+        )
+        resolved_labels.append(clean_lbl)
+        explicit_splits.append("val" if row.split == "val" else "train")
+
+    # Clean up any empty subfolder directories left behind after moving files
+    if req.sync_raw_subfolders and raw_dir.exists():
+        for child in raw_dir.iterdir():
+            if child.is_dir() and not child.name.startswith("."):
+                has_files = any(f.is_file() for f in child.rglob("*"))
+                if not has_files:
+                    shutil.rmtree(child, ignore_errors=True)
+
+    manifest_payload = _build_and_save_annotations_manifest(
+        dataset_name=target_ds,
+        raw_items=updated_raw_items,
+        resolved_labels=resolved_labels,
+        normal_class_name=norm_cls,
+        val_ratio=req.val_ratio,
+        seed=req.seed,
+    )
+
+    # If user did not request rebalancing splits, preserve the explicit train/val split from the table
+    if not req.rebalance_splits and len(manifest_payload["items"]) == len(explicit_splits):
+        for i, sp in enumerate(explicit_splits):
+            manifest_payload["items"][i]["split"] = sp
+        ann_path = manifests_dir / "annotations.json"
+        tmp_path = ann_path.with_suffix(".json.tmp")
+        tmp_path.write_text(
+            json.dumps(manifest_payload, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        os.replace(tmp_path, ann_path)
+
+    # Sync clustering_result.json if present so UI stays consistent
+    clustering_path = manifests_dir / "clustering_result.json"
+    if clustering_path.exists():
+        try:
+            c_data = json.loads(clustering_path.read_text(encoding="utf-8"))
+            c_data["normal_class_name"] = norm_cls
+            label_by_old_or_new: dict[str, str] = {}
+            cid_by_old_or_new: dict[str, int] = {}
+            for orig_row, upd_it, lbl_str in zip(req.items, manifest_payload["items"], resolved_labels):
+                label_by_old_or_new[orig_row.image_path] = lbl_str
+                label_by_old_or_new[upd_it["image_path"]] = lbl_str
+                cid_by_old_or_new[orig_row.image_path] = int(upd_it["cluster_id"])
+                cid_by_old_or_new[upd_it["image_path"]] = int(upd_it["cluster_id"])
+
+            for it in c_data.get("items", []):
+                old_p = str(it.get("image_path", ""))
+                new_p = moved_paths.get(old_p, old_p)
+                it["image_path"] = new_p
+                it["file_name"] = Path(new_p).name
+                if new_p in label_by_old_or_new:
+                    new_l = label_by_old_or_new[new_p]
+                    it["suggested_label"] = new_l
+                    if req.sync_raw_subfolders:
+                        it["subfolder_class"] = new_l
+                        it["ground_truth_hint"] = new_l
+                if new_p in cid_by_old_or_new:
+                    it["cluster_id"] = cid_by_old_or_new[new_p]
+                    it["is_normal_core"] = cid_by_old_or_new[new_p] == 0
+
+            tmp_c = clustering_path.with_suffix(".json.tmp")
+            tmp_c.write_text(json.dumps(c_data, ensure_ascii=False, indent=2), encoding="utf-8")
+            os.replace(tmp_c, clustering_path)
+        except Exception:
+            pass
+
+    return manifest_payload

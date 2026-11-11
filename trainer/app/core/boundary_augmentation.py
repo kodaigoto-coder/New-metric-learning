@@ -108,16 +108,16 @@ def synthesize_anomalous_mixup_images(
     normal_images: torch.Tensor,
     defect_images: torch.Tensor,
     defect_labels: torch.Tensor,
-    alpha_min: float = 0.80,
-    alpha_max: float = 0.90,
+    alpha_min: float = 0.55,
+    alpha_max: float = 0.75,
     num_synthetic: int | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Synthesize extreme boundary hard anomalies via Anomalous Mixup:
+    """Synthesize boundary hard anomalies via Anomalous Mixup:
 
         I_mix = alpha * I_good + (1 - alpha) * I_bad,   alpha ~ Uniform(alpha_min, alpha_max)
 
-    Because alpha in [0.80, 0.90], `I_mix` consists of 80%~90% Normal image + 10%~20% Defect image,
-    placing it directly on the Normal/Anomaly decision boundary.
+    Default alpha in [0.55, 0.75] places `I_mix` on the Normal/Anomaly decision boundary
+    without making it indistinguishable from pure Normal images.
     """
     if normal_images.shape[0] == 0 or defect_images.shape[0] == 0:
         return (
@@ -129,8 +129,8 @@ def synthesize_anomalous_mixup_images(
     b_def = defect_images.shape[0]
     k_out = b_def if num_synthetic is None else min(max(1, int(num_synthetic)), b_def * 2)
 
-    a_low = float(np.clip(min(alpha_min, alpha_max), 0.55, 0.95))
-    a_high = float(np.clip(max(alpha_min, alpha_max), a_low + 0.01, 0.97))
+    a_low = float(np.clip(min(alpha_min, alpha_max), 0.30, 0.90))
+    a_high = float(np.clip(max(alpha_min, alpha_max), a_low + 0.01, 0.95))
 
     alphas = torch.empty((k_out, 1, 1, 1), device=defect_images.device, dtype=defect_images.dtype)
     alphas.uniform_(a_low, a_high)
@@ -148,8 +148,8 @@ def synthesize_boundary_gap_features(
     normal_gap: torch.Tensor,
     defect_gap: torch.Tensor,
     defect_labels: torch.Tensor,
-    alpha_min: float = 0.80,
-    alpha_max: float = 0.90,
+    alpha_min: float = 0.55,
+    alpha_max: float = 0.75,
     transfer_ratio: float = 0.30,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Synthesize Defect-Transfer and Anomalous-Mixup standardized GAP features.
@@ -195,9 +195,9 @@ def synthesize_boundary_gap_features(
         (1.0 - transfer_mask) * h_target + transfer_mask * defect_gap, p=2, dim=-1
     )
 
-    # 2. High-Alpha Anomalous Mixup (alpha in [0.80, 0.90])
-    a_low = float(np.clip(min(alpha_min, alpha_max), 0.55, 0.95))
-    a_high = float(np.clip(max(alpha_min, alpha_max), a_low + 0.01, 0.97))
+    # 2. Boundary Anomalous Mixup (default alpha in [0.55, 0.75])
+    a_low = float(np.clip(min(alpha_min, alpha_max), 0.30, 0.90))
+    a_high = float(np.clip(max(alpha_min, alpha_max), a_low + 0.01, 0.95))
     alphas = torch.empty((b_def, 1), device=device, dtype=defect_gap.dtype).uniform_(a_low, a_high)
     h_mix_target = normal_gap[(target_idx + 1) % b_norm]
     h_mixup = F.normalize(alphas * h_mix_target + (1.0 - alphas) * defect_gap, p=2, dim=-1)

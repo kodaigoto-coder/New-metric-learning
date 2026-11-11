@@ -43,27 +43,39 @@ class TrainingJobRequest(BaseModel):
     loss_type: Literal["multi_proxy_anchor", "ms_loss"] = Field(default="multi_proxy_anchor")
     backbone_name: str = Field(default="efficientnet_b3")
     pooling_type: Literal["gap", "gem", "avg_max"] = Field(default="gem")
-    pretrained: bool = Field(default=False)
+    pretrained: bool = Field(default=True)
     freeze_backbone: bool = Field(default=True)
     unfreeze_last_block: bool = Field(default=False)
-    epochs: int = Field(default=8, ge=1, le=200)
+    epochs: int = Field(default=10, ge=1, le=200)
     batch_size: int = Field(default=32, ge=4, le=256)
     learning_rate: float = Field(default=2e-3, gt=0.0, le=1.0)
     tau_sim: float = Field(default=0.0, ge=-1.0, le=1.0)
+    normal_loss_ratio: float = Field(
+        default=0.50,
+        ge=0.05,
+        le=0.95,
+        description="Power balance ratio between Normal Centripetal Force and Anomaly Repulsion Force (0.50 = 50:50).",
+    )
+    repel_delta: float = Field(
+        default=0.0,
+        ge=-0.80,
+        le=0.80,
+        description="Cosine margin delta for anomaly repulsion max(0, S(x, p_norm) - delta) (default 0.0 = orthogonal 90 deg).",
+    )
     num_normal_proxies: int = Field(default=4, ge=1, le=12)
     hard_anomaly_boost: float = Field(default=3.0, ge=1.0, le=20.0)
     class_balance_beta: float = Field(default=0.99, ge=0.50, le=0.9999)
     enable_boundary_aug: bool = Field(default=True)
-    mixup_alpha_min: float = Field(default=0.80, ge=0.55, le=0.95)
-    mixup_alpha_max: float = Field(default=0.90, ge=0.60, le=0.97)
+    mixup_alpha_min: float = Field(default=0.55, ge=0.30, le=0.90)
+    mixup_alpha_max: float = Field(default=0.75, ge=0.35, le=0.95)
     nab_normal_ratio: float = Field(default=0.50, ge=0.25, le=0.75)
-    top_k_mode: Literal["count", "ratio"] = Field(default="count")
-    top_k_initial: float = Field(default=30.0, gt=0.0)
-    top_k_final: float = Field(default=20.0, gt=0.0)
-    gamma_initial: float = Field(default=0.4, ge=0.0)
+    top_k_mode: Literal["count", "ratio"] = Field(default="ratio")
+    top_k_initial: float = Field(default=0.30, gt=0.0)
+    top_k_final: float = Field(default=0.15, gt=0.0)
+    gamma_initial: float = Field(default=0.6, ge=0.0)
     gamma_final: float = Field(default=1.5, ge=0.0)
-    w_defect: float = Field(default=2.5, ge=1.0)
-    w_aux: float = Field(default=0.5, ge=0.0)
+    w_defect: float = Field(default=1.0, ge=0.1)
+    w_aux: float = Field(default=0.2, ge=0.0)
     full_snapshot_interval: int = Field(default=4, ge=1)
 
 

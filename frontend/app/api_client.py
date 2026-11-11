@@ -131,6 +131,42 @@ class BackendApiClient:
             resp.raise_for_status()
             return resp.json()
 
+    def direct_update_annotations(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Directly save edited per-image labels from the interactive UI table to `annotations.json`."""
+        with httpx.Client(timeout=30.0) as client:
+            resp = client.post(f"{self.base_url}/api/v1/annotations/direct-update", json=payload)
+            resp.raise_for_status()
+            return resp.json()
+
+    def rename_or_merge_subfolder_class(
+        self,
+        dataset_name: str,
+        old_class_name: str,
+        new_class_name: str,
+    ) -> dict[str, Any]:
+        """Rename or merge an existing subfolder class (`raw/<old>` -> `raw/<new>`) and sync manifests."""
+        payload = {
+            "dataset_name": dataset_name,
+            "old_class_name": old_class_name,
+            "new_class_name": new_class_name,
+        }
+        with httpx.Client(timeout=30.0) as client:
+            resp = client.post(
+                f"{self.base_url}/api/v1/datasets/{dataset_name}/classes/rename",
+                json=payload,
+            )
+            resp.raise_for_status()
+            return resp.json()
+
+    def delete_subfolder_class(self, dataset_name: str, class_name: str) -> dict[str, Any]:
+        """Delete a single subfolder class (`raw/<class_name>`) from a dataset."""
+        with httpx.Client(timeout=30.0) as client:
+            resp = client.delete(
+                f"{self.base_url}/api/v1/datasets/{dataset_name}/classes/{class_name}"
+            )
+            resp.raise_for_status()
+            return resp.json()
+
     def trigger_training(self, payload: dict[str, Any]) -> dict[str, Any]:
         with httpx.Client(timeout=30.0) as client:
             resp = client.post(f"{self.base_url}/api/v1/jobs/training", json=payload)

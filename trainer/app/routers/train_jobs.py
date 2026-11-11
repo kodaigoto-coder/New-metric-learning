@@ -337,9 +337,11 @@ def _execute_training_task(
                 num_normal_proxies=req.num_normal_proxies,
                 num_defect_classes=num_defect_classes,
                 class_balanced_weights=cb_weights,
+                normal_loss_ratio=req.normal_loss_ratio,
+                delta_neg=req.repel_delta,
                 w_defect=req.w_defect,
                 hard_anomaly_boost=req.hard_anomaly_boost,
-                ortho_weight=max(0.2, req.w_aux),
+                ortho_weight=max(0.1, req.w_aux),
             ).to(device)
             trainable_params = [p for p in model.parameters() if p.requires_grad] + list(
                 proxy_criterion.parameters()
@@ -352,7 +354,7 @@ def _execute_training_task(
                     },
                     {
                         "params": list(proxy_criterion.parameters()),
-                        "lr": req.learning_rate * 2.5,
+                        "lr": req.learning_rate * 0.5,
                     },
                 ],
                 weight_decay=1e-4,
@@ -459,6 +461,8 @@ def _execute_training_task(
             )
 
             epoch_losses: list[float] = []
+            epoch_centripetal_losses: list[float] = []
+            epoch_repel_losses: list[float] = []
             last_k_eff = 0
 
             for batch_indices in batches:
@@ -544,9 +548,10 @@ def _execute_training_task(
                         synth_labels=y_synth,
                         memory_bank=memory_bank,
                         gamma_repel=curr_state.gamma_repel,
-                        repel_margin=curr_state.repel_margin,
+                        repel_margin=req.repel_delta,
                         top_k_mode=curr_state.top_k_mode,
                         top_k_value=curr_state.top_k_value,
+                        normal_loss_ratio=req.normal_loss_ratio,
                     )
                 else:
                     assert ms_criterion is not None
@@ -571,6 +576,10 @@ def _execute_training_task(
                     is_defect_flags=batch_def,
                 )
                 epoch_losses.append(loss_stats["loss_total"])
+                epoch_centripetal_losses.append(
+                    float(loss_stats.get("loss_centripetal", loss_stats.get("loss_ms", 0.0)))
+                )
+                epoch_repel_losses.append(float(loss_stats.get("loss_repel", 0.0)))
                 if loss_stats["effective_top_k"] > 0:
                     last_k_eff = int(loss_stats["effective_top_k"])
 
@@ -601,6 +610,10 @@ def _execute_training_task(
                 norm_proxies_np, def_proxies_np = proxy_criterion.get_proxies_numpy()
 
             mean_loss = float(np.mean(epoch_losses)) if epoch_losses else 0.0
+            mean_centripetal = (
+                float(np.mean(epoch_centripetal_losses)) if epoch_centripetal_losses else 0.0
+            )
+            mean_repel = float(np.mean(epoch_repel_losses)) if epoch_repel_losses else 0.0
             is_milestone = (
                 epoch == 1
                 or epoch == req.epochs
@@ -679,6 +692,9 @@ def _execute_training_task(
                 "epoch": epoch,
                 "loss_type": req.loss_type,
                 "train_loss": round(mean_loss, 5),
+                "loss_centripetal": round(mean_centripetal, 5),
+                "loss_repel": round(mean_repel, 5),
+                "normal_loss_ratio": round(float(req.normal_loss_ratio), 3),
                 "val_recall": val_recall,
                 "val_precision": val_precision,
                 "val_f1": val_f1,
@@ -690,7 +706,7 @@ def _execute_training_task(
                 "fisher_separation_ratio": float(disp_m.get("fisher_separation_ratio", 0.0)),
                 "curriculum_progress": curr_state.progress,
                 "gamma_repel": curr_state.gamma_repel,
-                "repel_margin": curr_state.repel_margin,
+                "repel_margin": float(req.repel_delta if use_proxy_anchor else curr_state.repel_margin),
                 "configured_top_k": curr_state.top_k_value,
                 "effective_top_k": last_k_eff,
                 "num_normal_proxies": int(req.num_normal_proxies if use_proxy_anchor else 1),

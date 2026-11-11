@@ -374,3 +374,30 @@ EGM Goldfish Review（Stage 5〜9）およびユーザー設計決定をすべ�
   5. **3D UMAP クラスタ半径**: 3D UMAP 投影空間上における良品群・不良群それぞれの重心からの二乗平均平方根（RMS）半径。
   * セクション2の上部に **`◀ Epoch -1` / `Epoch +1 ▶` ステップ送りボタン**、**Epoch 1 からの変化量（Delta）付き分散KPIカード**、および **全エポックにわたる分散収縮・空間分離比 $J(t)$ の推移折れ線グラフ** を配置し、学習回数に応じた空間構造の進化を一目で把握できるようにした。
 
+---
+
+## 17. 50:50 パワーバランス Loss 設計（可変比率対応）＆ データセット切替・ラベル直接修正機能の実装 (2026-11-11)
+
+エポック進行に伴う良品クラスタの分散膨張を根本解決し、かつデータセットの切り替えおよびラベル付けミスの修正をUI上から自在に行えるよう、以下の設計更新を実施した（詳細分析は [normal_dispersion_rca_and_proposals.md](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/normal_dispersion_rca_and_proposals.md) を参照）。
+
+### 17.1 良品求心力 50% : 不良斥力 50% の対称コサイン Loss 設計（比率可変対応）
+従来の `LogSumExp` / `Softplus` 型 Loss が抱えていた「$\delta_{\text{pos}}=0.65$ 以上の不感帯による求心力消失」「Direction B による良品への遠心力散乱」「Direction A による良品プロキシ $p_{\text{norm}}$ のドリフト」を解消するため、[proxy_anchor_loss.py](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/trainer/app/core/proxy_anchor_loss.py) の `CustomizedMultiProxyAnchorLoss` を以下の **コサイン類似度ベース 50:50 パワーバランス式** に刷新した：
+$$L_{\text{total}} = \underbrace{\lambda_{\text{norm}} \frac{1}{|\mathcal{B}_{\text{norm}}|} \sum_{x \in \mathcal{B}_{\text{norm}}} \left(1 - S(x, p_{\text{norm}})\right)}_{\text{① 良品の求心力（基準 50\%: }\lambda_{\text{norm}}=1.0\text{）}} + \underbrace{\lambda_{\text{anom}} \frac{1}{|\mathcal{B}_{\text{anom}}|} \sum_{x \in \mathcal{B}_{\text{anom}}} \tilde{w}(x) \max\left(0, S(x, p_{\text{norm}}\text{.detach()}) - \delta\right)}_{\text{② 不良の斥力（基準 50\%: }\lambda_{\text{anom}}=1.0\text{）}} + L_{\text{aux}}$$
+* **① 良品の求心力 (`loss_centripetal`)**:
+  * $S(x, p_{\text{norm}}) = \max_{m \in \{1..M\}} \langle z(x), \hat{p}_{\text{norm}}^{(m)} \rangle$ とし、バッチ内の**全良品サンプル**に対して目標値 $0.0$（類似度 $1.0$）、直交時 $1.0$（類似度 $0.0$）、勾配微係数 $-1.0$（全域一定）の減衰しない求心力を与える。また旧 Direction B（`z_norm @ p_def.T`）を撤廃し、良品サンプルに遠心力が一切働かないようにした。
+* **② 不良の斥力 (`loss_repel`)**:
+  * **`p_norm.detach()` によるアンカー固定**: 不良斥力の計算時に良品プロキシへの勾配流入を遮断し、不良サンプルからの反作用で $p_{\text{norm}}$ がドリフトする現象を根絶した。
+  * **平均 $1.0$ 正規化重み $\tilde{w}(x)$**: 実不良の Top-$K$ 危険サンプルへのブースト（$\lambda_{\text{hard}}$）や合成サンプルの抑制重み（$0.25$）を適用した上で、$\frac{1}{|\mathcal{B}_{\text{anom}}|} \sum \tilde{w}(x) = 1.0$ に平均正規化することで、第1項と第2項が常に **`0.0 〜 1.0` の同一スケール（1.0 : 1.0 ＝ 50 : 50）** で釣り合うことを数学的に保証した。
+* **UI からのパワーバランス比率可変スライダー**:
+  * [2_training_monitor.py](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/frontend/app/pages/2_training_monitor.py) に `normal_loss_ratio`（$r_{\text{norm}} \in [0.10, 0.90]$、デフォルト `0.50`）およびマージン $\delta$（`repel_delta`、デフォルト `0.00`）のスライダーを追加し、$\lambda_{\text{norm}} = 2 r_{\text{norm}}, \; \lambda_{\text{anom}} = 2(1 - r_{\text{norm}})$ によって求心力と斥力の比率を後から任意に調整可能とした。
+
+### 17.2 データセット切り替えバグ修正・多階層フォルダ対応・ラベル直接編集機能
+1. **データセット切り替えの `st.session_state` 巻き戻りバグ修正**:
+   * 全ページ（[1_clustering_annotation.py](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/frontend/app/pages/1_clustering_annotation.py), [2_training_monitor.py](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/frontend/app/pages/2_training_monitor.py), [3_space_evaluation.py](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/frontend/app/pages/3_space_evaluation.py)）のサイドバー・メインパネル選択ウィジェットを `_synced_active_ds` ＋ `on_change` コールバック方式に統一し、新規データセット作成（例: `transistor`）や切り替え直後に `default` へ巻き戻る不具合を解消した。
+2. **多階層フォルダアップロード時の直上親フォルダ抽出 (`parts[-2]`)**:
+   * MVTec AD（例: `transistor/test/bent_lead/000.png`, `transistor/train/good/000.png`）のような多階層フォルダでも、直上の親フォルダ名（`bent_lead`, `good`）をクラス名として正確に認識し、中間パスをファイル名プレフィックス（`test_000.png`, `train_000.png`）として保持して同名ファイルの上書きを防止した。
+3. **サブフォルダ（クラス）管理 ＆ インタラクティブ・ラベル修正テーブル (`st.data_editor`)**:
+   * [datasets.py](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/backend/app/routers/datasets.py) に `POST /api/v1/datasets/{dataset_name}/classes/rename`（クラス名変更・統合）、`DELETE /api/v1/datasets/{dataset_name}/classes/{class_name}`（特定クラスフォルダ削除）、および `POST /api/v1/annotations/direct-update`（個別／一括ラベル直接更新＋`raw/<class>/` 実ファイル同期移動）を追加。
+   * [1_clustering_annotation.py](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/frontend/app/pages/1_clustering_annotation.py) のセクション1に「クラスタリングなしでサブフォルダ名をそのまま正解ラベル (`annotations.json`) として登録するボタン」と「サブフォルダ名称変更・統合・削除タブ」を追加し、セクション4に **全画像のラベル一括置換＆セル直接編集テーブル (`st.data_editor`)** を実装した。
+
+

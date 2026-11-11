@@ -1,4 +1,4 @@
-"""Customized Multi-Proxy Anchor Loss with Sub-Center Normal Proxies, Top-K Hard-Anomaly Boost, One-Way Synthetic Repulsion, Class-Balanced Weighting, and Proxy Orthogonality."""
+"""50:50 Power-Balanced Multi-Proxy Anchor Loss with Adjustable Normal Centripetal vs. Anomaly Repulsion Ratio."""
 
 from __future__ import annotations
 
@@ -12,28 +12,33 @@ from app.core.memory_bank import CrossBatchMemoryBank, TopKMode
 
 
 class CustomizedMultiProxyAnchorLoss(nn.Module):
-    """Multi-Proxy Anchor Loss tailored for Weakly-Supervised Industrial Anomaly Detection.
+    """50:50 Power-Balanced Multi-Proxy Loss for Weakly-Supervised Industrial Anomaly Detection.
 
-    Resolves the two fundamental failure modes of sample-pair MS-Loss:
-    1. Zero Inter-Defect Sample Repulsion:
-       Replaces sample-vs-sample pair repulsion with sample-vs-proxy anchors and completely
-       eliminates repulsion between Defect Mode A samples and Defect Mode B samples/proxies.
-       100% of negative sample gradients are concentrated on separating Normal vs. Anomaly.
-    2. Multi-Proxy Normal Sub-Centers (M = 3..5):
-       Assigns M learnable proxies `{p_norm^(1) .. p_norm^(M)}` to the Normal class so lot,
-       illumination, and positional variations are absorbed by distinct normal sub-centers.
-    3. Top-K Hard Anomaly Penalty Boost:
-       Identifies the Top-K (or Top-q%) anomaly samples with the highest maximum cosine
-       similarity `s_norm(z_i) = max_m <z_i, p_norm^(m)>` (dangerous pseudo-normals) and
-       amplifies their repulsion weight by `hard_anomaly_boost` (lambda_hard > 1).
-    4. One-Way Boundary Repulsion for Synthetic Samples (Anomalous Mixup & Defect Transfer):
-       Synthetic hard samples (`synth_embeddings`) are strongly repelled from all M Normal
-       proxies in `L_repel`, but are strictly excluded from `L_def_pos` so they never drag
-       Defect proxies toward the Normal region.
-    5. Proxy-Only Orthogonality Regularizer (`L_proxy_ortho`):
-       Applies a lightweight cosine hinge penalty purely between proxy parameter vectors
-       `{p_def^(1) .. p_def^(C)}` so defect proxies remain distinct in 128-D space without
-       consuming any sample feature gradients.
+    Core Formulation (50:50 Linear Cosine Power Balance):
+        L_total = lambda_norm * L_centripetal + lambda_anom * L_repel + L_aux
+
+    1. Term 1 — Normal Centripetal Force (`L_centripetal`, default 50% / lambda_norm = 1.0):
+           L_centripetal = (1 / |B_norm|) * sum_{x in B_norm} (1 - S(x, p_norm))
+       where `S(x, p_norm) = max_{m in 1..M} <z(x), p_norm^(m)>`.
+       Unlike Softplus/LogSumExp (which saturates above a margin and concentrates 99% of the
+       gradient on a single outlier) or squared error `(1 - S)^2` (whose gradient vanishes near
+       S = 1.0), the linear cosine distance `1 - S(x, p_norm)` applies a constant unit inward
+       gradient (`-1.0`) to every normal sample all the way to `S = 1.0`, monotonically
+       shrinking normal cluster dispersion across epochs.
+
+    2. Term 2 — Anomaly Centrifugal Repulsion (`L_repel`, default 50% / lambda_anom = 1.0):
+           L_repel = (1 / |B_anom|) * sum_{x in B_anom} w_tilde(x) * max(0, S(x, p_norm.detach()) - delta)
+       * `p_norm.detach()` anchors the normal proxies so anomaly repulsion never drags `p_norm`
+         away from the true normal centroid.
+       * `w_tilde(x)` prioritizes Top-K hard real anomalies (`hard_anomaly_boost`) while keeping
+         synthetic Mixup samples at a gentle `0.25x` weight, and is mean-normalized (`mean(w_tilde) = 1.0`)
+         so that Term 1 and Term 2 strictly remain on the same `[0.0, 1.0]` yardstick.
+       * Zero centrifugal force (`Direction B` removed from `z_norm`) is applied to normal samples.
+
+    3. Adjustable Power Ratio (`normal_loss_ratio` in `[0.05, 0.95]`, default `0.50` = 50:50):
+           lambda_norm = 2.0 * normal_loss_ratio
+           lambda_anom = 2.0 * (1.0 - normal_loss_ratio)
+       At `normal_loss_ratio = 0.50`, `lambda_norm = 1.0` and `lambda_anom = 1.0` (exact 50:50).
     """
 
     def __init__(
@@ -42,20 +47,22 @@ class CustomizedMultiProxyAnchorLoss(nn.Module):
         num_normal_proxies: int = 4,
         num_defect_classes: int = 3,
         class_balanced_weights: np.ndarray | list[float] | None = None,
+        normal_loss_ratio: float = 0.50,
         alpha_pos: float = 16.0,
         gamma_neg: float = 20.0,
-        delta_pos: float = 0.65,
-        delta_neg: float = -0.15,
-        w_defect: float = 2.5,
+        delta_pos: float = 0.88,
+        delta_neg: float = 0.0,
+        w_defect: float = 1.0,
         hard_anomaly_boost: float = 3.0,
         ortho_margin_defect: float = 0.20,
         ortho_margin_normal: float = 0.85,
-        ortho_weight: float = 0.5,
+        ortho_weight: float = 0.2,
     ) -> None:
         super().__init__()
         self.embedding_dim = int(embedding_dim)
         self.num_normal_proxies = max(1, int(num_normal_proxies))
         self.num_defect_classes = max(1, int(num_defect_classes))
+        self.normal_loss_ratio = float(np.clip(normal_loss_ratio, 0.05, 0.95))
         self.alpha_pos = float(alpha_pos)
         self.gamma_neg = float(gamma_neg)
         self.delta_pos = float(delta_pos)
@@ -125,7 +132,7 @@ class CustomizedMultiProxyAnchorLoss(nn.Module):
             mean_norm = mean_norm / (np.linalg.norm(mean_norm, axis=1, keepdims=True) + 1e-8)
             base_t = torch.from_numpy(mean_norm).to(device).repeat(self.num_normal_proxies, 1)
             if self.num_normal_proxies > 1:
-                perturb = torch.randn_like(base_t) * 0.08
+                perturb = torch.randn_like(base_t) * 0.05
                 base_t = F.normalize(base_t + perturb, p=2, dim=-1)
             self.normal_proxies.copy_(base_t)
 
@@ -139,7 +146,6 @@ class CustomizedMultiProxyAnchorLoss(nn.Module):
                 c_mean = c_vecs.mean(axis=0)
                 c_mean = c_mean / (np.linalg.norm(c_mean) + 1e-8)
                 c_t = torch.from_numpy(c_mean.astype(np.float32)).to(device)
-                # Subtract positive projection onto p_norm_mean so defect proxy starts in negative hemisphere
                 proj = torch.dot(c_t, p_norm_mean.squeeze(0))
                 if float(proj.item()) > -0.10:
                     c_t = F.normalize(c_t - (proj + 0.35) * p_norm_mean.squeeze(0), p=2, dim=-1)
@@ -172,11 +178,12 @@ class CustomizedMultiProxyAnchorLoss(nn.Module):
         synth_labels: torch.Tensor | None = None,
         memory_bank: CrossBatchMemoryBank | None = None,
         gamma_repel: float = 1.0,
-        repel_margin: float = -0.15,
+        repel_margin: float = 0.0,
         top_k_mode: TopKMode = "count",
         top_k_value: float = 20.0,
+        normal_loss_ratio: float | None = None,
     ) -> tuple[torch.Tensor, dict[str, float]]:
-        """Compute Customized Multi-Proxy Anchor Loss and diagnostic statistics."""
+        """Compute 50:50 Power-Balanced Centripetal-Normal / Repulsive-Anomaly Loss."""
         z = F.normalize(embeddings, p=2, dim=-1)
         labels = labels.view(-1)
         batch_size = z.shape[0]
@@ -184,11 +191,23 @@ class CustomizedMultiProxyAnchorLoss(nn.Module):
             zero = z.sum() * 0.0
             return zero, {
                 "loss_ms": 0.0,
+                "loss_centripetal": 0.0,
                 "loss_repel": 0.0,
                 "loss_ortho": 0.0,
                 "loss_total": 0.0,
+                "lambda_norm": 1.0,
+                "lambda_anom": 1.0,
                 "effective_top_k": 0.0,
             }
+
+        ratio = (
+            float(np.clip(normal_loss_ratio, 0.05, 0.95))
+            if normal_loss_ratio is not None
+            else self.normal_loss_ratio
+        )
+        # At ratio = 0.50 (50:50 default) -> lambda_norm = 1.0, lambda_anom = 1.0
+        lambda_norm = 2.0 * ratio
+        lambda_anom = 2.0 * (1.0 - ratio)
 
         p_norm, p_def = self.get_normalized_proxies()  # [M, D], [C, D]
         is_defect = labels > 0
@@ -196,159 +215,136 @@ class CustomizedMultiProxyAnchorLoss(nn.Module):
         z_def = z[is_defect]
         y_def = labels[is_defect]
 
-        # -------------------------------------------------------------------------
-        # 1. L_norm_pos: Multi-Proxy Sub-Center Attraction for Normal Samples
-        # Each normal sample z_j is pulled to its nearest normal sub-center proxy m*(j)
-        # -------------------------------------------------------------------------
-        loss_norm_pos = z.new_tensor(0.0)
+        # =========================================================================
+        # ① 良品の求心力 (Normal Centripetal Force — Scale [0.0, 2.0], Target 0.0)
+        #    L_centripetal = (1 / |B_norm|) * sum_{x in B_norm} (1 - S(x, p_norm))
+        #    Applies constant unit gradient (-1.0) to EVERY normal sample in B_norm.
+        # =========================================================================
+        loss_centripetal = z.new_tensor(0.0)
         if z_norm.shape[0] > 0:
             sim_jn = z_norm @ p_norm.T  # [B_norm, M]
-            nearest_m = torch.argmax(sim_jn.detach(), dim=1)  # [B_norm]
-            active_norm_terms: list[torch.Tensor] = []
+            # Maximum cosine similarity to the M normal sub-center proxies
+            s_norm_max, _ = sim_jn.max(dim=1)  # [B_norm]
+            loss_primary_centripetal = (1.0 - s_norm_max).mean()
 
-            for m_idx in range(self.num_normal_proxies):
-                mask_m = nearest_m == m_idx
-                if torch.any(mask_m):
-                    sims_m = sim_jn[mask_m, m_idx]
-                    exps = -self.alpha_pos * (sims_m - self.delta_pos)
-                    term_m = (1.0 / self.alpha_pos) * torch.logsumexp(
-                        torch.cat([z.new_zeros(1), exps], dim=0), dim=0
-                    )
-                    active_norm_terms.append(term_m)
+            # Keep all M sub-centers anchored near the normal sample distribution
+            if self.num_normal_proxies > 1:
+                subcenter_anchor = (1.0 - sim_jn.max(dim=0).values).mean()
+                loss_centripetal = 0.90 * loss_primary_centripetal + 0.10 * subcenter_anchor
+            else:
+                loss_centripetal = loss_primary_centripetal
 
-            if active_norm_terms:
-                loss_norm_pos = torch.stack(active_norm_terms).mean()
-
-        # -------------------------------------------------------------------------
-        # 2. L_def_pos: Class-Balanced Defect Mode Attraction (REAL defects only!)
-        # Synthetic Mixup/Transfer samples are strictly excluded so they never drag
-        # p_def^(c) toward the Normal cluster.
-        # -------------------------------------------------------------------------
-        loss_def_pos = z.new_tensor(0.0)
-        if z_def.shape[0] > 0:
-            sim_id = z_def @ p_def.T  # [B_def, C]
-            active_def_terms: list[torch.Tensor] = []
-
-            for c_idx in range(1, self.num_defect_classes + 1):
-                mask_c = y_def == c_idx
-                if torch.any(mask_c):
-                    sims_c = sim_id[mask_c, c_idx - 1]
-                    w_c = self._get_class_weight(c_idx)
-                    exps = -self.alpha_pos * (sims_c - self.delta_pos)
-                    term_c = (
-                        w_c
-                        * (1.0 / self.alpha_pos)
-                        * torch.logsumexp(torch.cat([z.new_zeros(1), exps], dim=0), dim=0)
-                    )
-                    active_def_terms.append(term_c)
-
-            if active_def_terms:
-                loss_def_pos = torch.stack(active_def_terms).mean()
-
-        loss_pos = loss_norm_pos + loss_def_pos
-
-        # -------------------------------------------------------------------------
-        # 3. L_repel: Zero Inter-Defect Repulsion + Top-K Hard Anomaly Boost
-        # Combines real defect embeddings + one-way synthetic boundary embeddings
-        # -------------------------------------------------------------------------
+        # =========================================================================
+        # ② 不良の斥力 (Anomaly Centrifugal Repulsion — Scale [0.0, 1.0+], Target 0.0)
+        #    L_repel = (1 / |B_anom|) * sum_{x in B_anom} w_tilde(x) * max(0, S(x, p_norm.detach()) - delta)
+        #    - Strict `p_norm.detach()` prevents anomaly repulsion from drifting p_norm!
+        #    - Intra-anomaly weights w_tilde(x) are mean-normalized to 1.0 so the
+        #      1.0 : 1.0 (50:50) macro scale with L_centripetal is strictly preserved.
+        # =========================================================================
+        n_real_def = z_def.shape[0]
         if synth_embeddings is not None and synth_embeddings.shape[0] > 0:
             z_synth = F.normalize(synth_embeddings, p=2, dim=-1)
             if synth_labels is not None and synth_labels.numel() == z_synth.shape[0]:
                 y_synth = synth_labels.view(-1)
             else:
                 y_synth = torch.ones(z_synth.shape[0], dtype=torch.long, device=z.device)
-            z_all_neg = torch.cat([z_def, z_synth], dim=0) if z_def.shape[0] > 0 else z_synth
-            y_all_neg = torch.cat([y_def, y_synth], dim=0) if z_def.shape[0] > 0 else y_synth
+            z_all_neg = torch.cat([z_def, z_synth], dim=0) if n_real_def > 0 else z_synth
+            y_all_neg = torch.cat([y_def, y_synth], dim=0) if n_real_def > 0 else y_synth
+            n_synth = z_synth.shape[0]
         else:
             z_all_neg = z_def
             y_all_neg = y_def
+            n_synth = 0
 
-        target_neg_margin = min(float(repel_margin), self.delta_neg)
-        repel_terms: list[torch.Tensor] = []
+        # Effective cosine margin delta (default 0.0 = orthogonal 90 deg)
+        delta_margin = float(repel_margin)
+        loss_repel = z.new_tensor(0.0)
         k_eff_hard = 0
 
-        # Direction A: Repel all Real + Synthetic Anomalies from ALL M Normal Proxies
-        # with Top-K Hard Anomaly Penalty Boost for the samples closest to Normal proxies
         if z_all_neg.shape[0] > 0:
-            sim_neg_norm = z_all_neg @ p_norm.T  # [N_neg, M]
-            # Worst-case intrusion score into the Normal multi-proxy region
-            intrusion_scores = sim_neg_norm.amax(dim=1).detach()  # [N_neg]
+            # Detach p_norm so anomaly repulsion moves ONLY the feature extractor (z_all_neg),
+            # never dragging the Normal proxy anchor away from the Normal cluster center.
+            p_norm_anchor = p_norm.detach()
+            sim_neg_norm = z_all_neg @ p_norm_anchor.T  # [N_anom, M]
+            s_anom_max, _ = sim_neg_norm.max(dim=1)  # [N_anom]
+
             n_neg = z_all_neg.shape[0]
+            raw_weights = torch.ones(n_neg, device=z.device, dtype=z.dtype)
 
-            if top_k_mode == "ratio":
-                ratio_val = max(0.05, min(1.0, float(top_k_value)))
-                k_eff_hard = max(1, min(n_neg, int(np.ceil(n_neg * ratio_val))))
-            else:
-                k_eff_hard = max(1, min(n_neg, int(round(float(top_k_value)))))
-
-            _, hard_idx = torch.topk(intrusion_scores, k=k_eff_hard, largest=True)
-            boost_vec = torch.ones(n_neg, device=z.device, dtype=z.dtype)
-            boost_vec[hard_idx] = self.hard_anomaly_boost
-
-            # Multiply by per-class Class-Balanced Weight W_c and global w_defect
-            cb_vec = torch.stack([self._get_class_weight(int(c.item())) for c in y_all_neg])
-            omega_vec = (boost_vec * cb_vec * self.w_defect).clamp(min=1e-4)
-            log_omega = torch.log(omega_vec)  # [N_neg]
-
-            norm_anchor_losses: list[torch.Tensor] = []
-            for m_idx in range(self.num_normal_proxies):
-                exps_m = log_omega + self.gamma_neg * (sim_neg_norm[:, m_idx] - target_neg_margin)
-                term_m = (1.0 / self.gamma_neg) * torch.logsumexp(
-                    torch.cat([z.new_zeros(1), exps_m], dim=0), dim=0
+            # Apply Class-Balanced Weight and Top-K Hard-Anomaly Boost ONLY to real defects
+            if n_real_def > 0:
+                cb_real = torch.stack(
+                    [self._get_class_weight(int(c.item())) for c in y_all_neg[:n_real_def]]
                 )
-                norm_anchor_losses.append(term_m)
+                raw_weights[:n_real_def] = cb_real
 
-            repel_terms.append(torch.stack(norm_anchor_losses).mean())
+                if top_k_mode == "ratio":
+                    ratio_val = max(0.05, min(1.0, float(top_k_value)))
+                    k_eff_hard = max(1, min(n_real_def, int(np.ceil(n_real_def * ratio_val))))
+                else:
+                    k_eff_hard = max(1, min(n_real_def, int(round(float(top_k_value)))))
 
-        # Direction B: Repel Normal Samples from ALL C Defect Mode Proxies
-        if z_norm.shape[0] > 0:
-            sim_norm_def = z_norm @ p_def.T  # [B_norm, C]
-            def_anchor_losses: list[torch.Tensor] = []
+                real_intrusion = s_anom_max[:n_real_def].detach()
+                _, hard_idx = torch.topk(real_intrusion, k=k_eff_hard, largest=True)
+                raw_weights[hard_idx] = raw_weights[hard_idx] * self.hard_anomaly_boost
+
+            # Synthetic Mixup/Transfer boundary samples get a gentle 0.25x relative weight
+            if n_synth > 0:
+                raw_weights[n_real_def:] = 0.25
+
+            # Mean-normalize weights to 1.0 so the macro scale of Term ② is strictly 1.0
+            norm_weights = raw_weights / (raw_weights.mean().detach() + 1e-8)
+
+            # Primary Hinge Repulsion: max(0, S(x, p_norm) - delta) on [0.0, 1.0] scale
+            hinge_primary = F.relu(s_anom_max - delta_margin)
+            # Gentle secondary margin (-0.25) so anomalies do not stall exactly on delta=0.0
+            deep_margin = min(delta_margin - 0.25, -0.25)
+            hinge_secondary = F.relu(s_anom_max - deep_margin)
+            per_sample_repel = 0.85 * hinge_primary + 0.15 * hinge_secondary
+
+            loss_repel = (norm_weights * per_sample_repel).mean()
+
+            # Optional XBM boundary normal repulsion (blended at 15% without changing macro scale)
+            if (
+                memory_bank is not None
+                and len(memory_bank) > 0
+                and memory_bank.normal_count > 0
+                and n_real_def > 0
+            ):
+                boundary_normals, _, k_xbm = memory_bank.get_top_k_boundary_normals(
+                    defect_embeddings=z_def,
+                    top_k_mode=top_k_mode,
+                    top_k_value=top_k_value,
+                    device=z.device,
+                )
+                if k_xbm > 0:
+                    k_eff_hard = max(k_eff_hard, int(k_xbm))
+                    sim_ik = torch.bmm(
+                        z_def.unsqueeze(1), boundary_normals.detach().transpose(1, 2)
+                    ).squeeze(1)
+                    xbm_max_sim, _ = sim_ik.max(dim=1)
+                    xbm_hinge = F.relu(xbm_max_sim - delta_margin).mean()
+                    loss_repel = 0.85 * loss_repel + 0.15 * xbm_hinge
+
+        # =========================================================================
+        # ③ 補助項: 実不良サブクラス凝集 & プロキシ間直交正則化 (No force on z_norm!)
+        # =========================================================================
+        loss_def_sub = z.new_tensor(0.0)
+        if n_real_def > 0:
+            sim_id = z_def @ p_def.T  # [B_def, C]
+            active_def_terms: list[torch.Tensor] = []
             for c_idx in range(1, self.num_defect_classes + 1):
-                w_c = self._get_class_weight(c_idx)
-                exps_c = self.gamma_neg * (sim_norm_def[:, c_idx - 1] - target_neg_margin)
-                term_c = (
-                    w_c
-                    * (1.0 / self.gamma_neg)
-                    * torch.logsumexp(torch.cat([z.new_zeros(1), exps_c], dim=0), dim=0)
-                )
-                def_anchor_losses.append(term_c)
+                mask_c = y_def == c_idx
+                if torch.any(mask_c):
+                    sims_c = sim_id[mask_c, c_idx - 1]
+                    active_def_terms.append((1.0 - sims_c).mean())
+            if active_def_terms:
+                loss_def_sub = torch.stack(active_def_terms).mean()
 
-            repel_terms.append(torch.stack(def_anchor_losses).mean())
+        # Keep defect proxies in the negative hemisphere relative to detached normal proxies
+        p_def_norm_sim = p_def @ p_norm.detach().T  # [C, M]
+        loss_def_proxy_hemisphere = F.relu(p_def_norm_sim - (-0.20)).mean()
 
-        # Direction C: XBM Top-K Boundary Normal Repulsion (pushes hard anomalies away from
-        # the actual boundary normal samples cached in the Cross-Batch Memory Bank)
-        if (
-            memory_bank is not None
-            and len(memory_bank) > 0
-            and memory_bank.normal_count > 0
-            and z_all_neg.shape[0] > 0
-        ):
-            boundary_normals, _, k_xbm = memory_bank.get_top_k_boundary_normals(
-                defect_embeddings=z_all_neg,
-                top_k_mode=top_k_mode,
-                top_k_value=top_k_value,
-                device=z.device,
-            )
-            if k_xbm > 0:
-                k_eff_hard = max(k_eff_hard, int(k_xbm))
-                sim_ik = torch.bmm(
-                    z_all_neg.unsqueeze(1), boundary_normals.transpose(1, 2)
-                ).squeeze(1)
-                exp_ik = self.gamma_neg * (sim_ik - target_neg_margin)
-                zeros_col = z.new_zeros((exp_ik.shape[0], 1))
-                xbm_term = (1.0 / self.gamma_neg) * torch.logsumexp(
-                    torch.cat([zeros_col, exp_ik], dim=1), dim=1
-                )
-                repel_terms.append(xbm_term.mean())
-
-        loss_repel = torch.stack(repel_terms).mean() if repel_terms else z.new_tensor(0.0)
-
-        # -------------------------------------------------------------------------
-        # 4. L_proxy_ortho: Proxy-Parameter-Only Orthogonality Regularizer
-        # Prevents C defect proxies from collapsing onto a single antipodal point -mu_norm
-        # and prevents M normal sub-centers from collapsing into a single point.
-        # -------------------------------------------------------------------------
         loss_ortho = z.new_tensor(0.0)
         if self.num_defect_classes > 1:
             sim_def_gram = p_def @ p_def.T  # [C, C]
@@ -369,14 +365,23 @@ class CustomizedMultiProxyAnchorLoss(nn.Module):
                 + 0.25 * F.relu(norm_off_sims - self.ortho_margin_normal).pow(2).mean()
             )
 
-        repel_scale = max(0.5, float(gamma_repel))
-        loss_total = loss_pos + (repel_scale * loss_repel) + (self.ortho_weight * loss_ortho)
+        loss_aux = (
+            0.10 * loss_def_sub
+            + 0.10 * loss_def_proxy_hemisphere
+            + (self.ortho_weight * loss_ortho)
+        )
+
+        # Total 50:50 Power-Balanced Loss (with user-configurable lambda_norm : lambda_anom)
+        loss_total = (lambda_norm * loss_centripetal) + (lambda_anom * loss_repel) + loss_aux
 
         stats = {
-            "loss_ms": float(loss_pos.detach().cpu().item()),
+            "loss_ms": float(loss_centripetal.detach().cpu().item()),
+            "loss_centripetal": float(loss_centripetal.detach().cpu().item()),
             "loss_repel": float(loss_repel.detach().cpu().item()),
             "loss_ortho": float(loss_ortho.detach().cpu().item()),
             "loss_total": float(loss_total.detach().cpu().item()),
+            "lambda_norm": round(float(lambda_norm), 4),
+            "lambda_anom": round(float(lambda_anom), 4),
             "effective_top_k": float(k_eff_hard),
         }
         return loss_total, stats

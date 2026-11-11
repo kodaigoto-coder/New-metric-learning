@@ -1,7 +1,7 @@
 # Goldfish Annotated Review Report
 
-**Status:** `resolved` (7/7 `PROPOSE FIX` items accepted and applied)
-**Target:** `proxy_anchor_design_review.md` (`Lines 1-94`) & `note.md` (`Lines 283-317`)
+**Status:** `resolved` (Round 1: 7/7 `PROPOSE FIX` items applied; Round 2: 2/2 `PROPOSE FIX` items applied, 0 Blockers)
+**Target:** `proxy_anchor_design_review.md` (`Lines 1-94`) & `note.md` (`Lines 283-376`)
 
 ## Prioritized Findings & AI Suggestions
 
@@ -101,3 +101,20 @@
 *   ***Proposed Edit:***
     *   Location: `note.md` Line 313
     *   Change: Append a note that `loss_pos` is returned under `stats["loss_ms"]` for backward compatibility.
+
+---
+
+## Round 2: 4 Application Enhancements & `note.md` Section 16 (`Status: resolved`)
+
+### [Issue 8] [`egm-codebase-details`] - Severity: Nit
+*   **Affected Scope:** [3_space_evaluation.py](frontend/app/pages/3_space_evaluation.py#L185-L235)
+*   **Discrepancy Description:** Both the sidebar (`step6_sidebar_session_select`) and top bar (`step6_main_session_select`) rendered independent session selectboxes without synchronizing widget state via `on_change` callbacks.
+*   ***AI Suggestion:*** PROPOSE FIX (Applied)
+*   ***Resolution:*** Synchronized both selectboxes via `st.session_state["step6_active_session"]` and `on_change` callbacks (`_on_sidebar_session_change` and `_on_main_session_change`).
+
+### [Issue 9] [`egm-codebase-details`] - Severity: Nit
+*   **Affected Scope:** [note.md](note.md#L346)
+*   **Discrepancy Description:** Line anchor for `TrainerConfig.allocate_next_session()` pointed to `#L221-L236` instead of `#L225-L239`.
+*   ***AI Suggestion:*** PROPOSE FIX (Applied)
+*   ***Resolution:*** Updated line anchor in `note.md` Section 16.2 to `#L225-L239`.
+

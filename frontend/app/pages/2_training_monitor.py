@@ -1,4 +1,4 @@
-"""Phase 2 UI: Multi-Proxy Anchor Loss Training Monitor & Numbered Session History Recall."""
+"""Phase 2 UI: 50:50 Power-Balanced Multi-Proxy Loss Training Monitor & Numbered Session History Recall."""
 
 from __future__ import annotations
 
@@ -31,12 +31,17 @@ def _render_training_history(
     df_hist = pd.DataFrame(history)
     with container.container():
         c_left, c_mid, c_right = st.columns(3)
+        loss_cols = [
+            col
+            for col in ["train_loss", "loss_centripetal", "loss_repel", "curriculum_progress"]
+            if col in df_hist.columns
+        ]
         fig_loss = px.line(
             df_hist,
             x="epoch",
-            y=[col for col in ["train_loss", "curriculum_progress", "gamma_repel"] if col in df_hist.columns],
+            y=loss_cols,
             markers=True,
-            title="Loss & カリキュラム進捗度 p(t) / 反発係数 γ(t)",
+            title="Loss推移 (Total / ①良品求心力 loss_centripetal / ②不良斥力 loss_repel)",
         )
         c_left.plotly_chart(
             fig_loss,
@@ -67,7 +72,7 @@ def _render_training_history(
             x="epoch",
             y=margin_cols,
             markers=True,
-            title="高次元最小コサイン距離 & クラス内分散/クラス間距離推移",
+            title="高次元最小コサイン距離 & 良品クラスタ内分散 (normal_intra_disp) 推移",
         )
         c_right.plotly_chart(
             fig_margin,
@@ -75,25 +80,26 @@ def _render_training_history(
             key=f"{prefix}_train_margin_chart_{render_seq}",
         )
 
-        st.markdown("##### エポック別ログ ＆ Cross-Batch Memory Bank メモリ解放監査")
+        st.markdown("##### エポック別ログ（50:50 求心力・斥力内訳 ＆ クラス内分散・XBMメモリ解放監査）")
         display_cols = [
             col
             for col in [
                 "epoch",
                 "train_loss",
+                "loss_centripetal",
+                "loss_repel",
+                "normal_loss_ratio",
                 "val_recall",
                 "val_f1",
                 "val_precision",
-                "d_min_boundary",
-                "d_min_centroid",
                 "normal_intra_disp",
                 "defect_intra_disp",
+                "inter_class_dist",
                 "fisher_separation_ratio",
-                "curriculum_progress",
-                "gamma_repel",
+                "d_min_boundary",
+                "d_min_centroid",
                 "effective_top_k",
                 "xbm_released_entries",
-                "xbm_remaining_entries",
             ]
             if col in df_hist.columns
         ]
@@ -104,7 +110,7 @@ def _render_training_history(
         )
 
 
-st.title("フェーズ2：128次元 Multi-Proxy Anchor Loss 学習 ＆ セッションNo履歴管理")
+st.title("フェーズ2：50:50 パワーバランス深層距離学習 ＆ セッションNo履歴管理")
 
 # Fetch dataset catalog & active dataset
 try:
@@ -115,22 +121,34 @@ except Exception:
 active_dataset_name: str = catalog_data.get("active_dataset", "default")
 dataset_names_list: list[str] = [d["dataset_name"] for d in catalog_data.get("datasets", [])] or ["default"]
 
+if (
+    st.session_state.get("_synced_active_ds") != active_dataset_name
+    or st.session_state.get("phase2_sidebar_ds_select") not in dataset_names_list
+):
+    st.session_state["_synced_active_ds"] = active_dataset_name
+    st.session_state["phase2_sidebar_ds_select"] = active_dataset_name
+
+
+def _on_phase2_ds_change() -> None:
+    chosen = st.session_state.get("phase2_sidebar_ds_select")
+    if chosen and chosen != st.session_state.get("_synced_active_ds"):
+        res = client.select_or_create_dataset(dataset_name=str(chosen))
+        actual = res.get("active_dataset", str(chosen))
+        st.session_state["_synced_active_ds"] = actual
+        st.session_state["phase2_sidebar_ds_select"] = actual
+        st.session_state["sidebar_ds_select"] = actual
+        st.session_state["main_ds_selector"] = actual
+
+
 with st.sidebar:
     st.markdown("### 📂 アクティブデータセット切替")
-    sb_idx = (
-        dataset_names_list.index(active_dataset_name)
-        if active_dataset_name in dataset_names_list
-        else 0
-    )
-    sb_selected_ds = st.selectbox(
+    st.selectbox(
         "学習対象データセット",
         options=dataset_names_list,
-        index=sb_idx,
         key="phase2_sidebar_ds_select",
+        on_change=_on_phase2_ds_change,
     )
-    if sb_selected_ds != active_dataset_name:
-        client.select_or_create_dataset(dataset_name=sb_selected_ds)
-        st.rerun()
+    st.caption(f"現在のアクティブDB: **`{active_dataset_name}`**")
 
 try:
     ann = client.get_annotations(dataset_name=active_dataset_name)
@@ -149,43 +167,65 @@ except Exception:
 
 # Section A: New Training Run Form
 with st.form("training_config_form"):
-    st.subheader(f"1. 新規学習セッションの実行（対象データセット: `{active_dataset_name}`）")
-    r_memo_c1, r0c1, r0c2, r0c3, r0c4 = st.columns([1.4, 1.5, 0.9, 1.0, 1.0])
-    session_label = r_memo_c1.text_input(
-        "セッションメモ / 実験名（任意）",
-        value="",
-        placeholder="例: M=4 λ=3.0 境界合成あり",
-        help="学習開始時に自動で Session #0001, #0002 ... が採番されます。後から識別しやすいメモを残せます。",
+    st.subheader(f"1. 50:50 パワーバランス Loss 設定 ＆ 新規学習セッション実行（対象: `{active_dataset_name}`）")
+    st.latex(
+        r"L_{\text{total}} = \underbrace{\lambda_{\text{norm}} \frac{1}{|\mathcal{B}_{\text{norm}}|} \sum_{x \in \mathcal{B}_{\text{norm}}} \left(1 - S(x, p_{\text{norm}})\right)}_{\text{① 良品の求心力（基準 50\%: }\lambda_{\text{norm}}=1.0\text{）}} + \underbrace{\lambda_{\text{anom}} \frac{1}{|\mathcal{B}_{\text{anom}}|} \sum_{x \in \mathcal{B}_{\text{anom}}} \tilde{w}(x) \max\left(0, S(x, p_{\text{norm}}) - \delta\right)}_{\text{② 不良の斥力（基準 50\%: }\lambda_{\text{anom}}=1.0\text{）}}"
     )
-    loss_type = r0c1.selectbox(
-        "距離学習アルゴリズム (Loss Type)",
-        options=["multi_proxy_anchor", "ms_loss"],
-        index=0,
-        help="multi_proxy_anchor (推奨): 不良サンプル同士の斥力を完全排除し、良品マルチプロキシ vs 不良の境界分離に勾配を100%集中させます。",
+
+    p_col1, p_col2, p_col3 = st.columns([1.8, 1.3, 1.3])
+    normal_loss_ratio = p_col1.slider(
+        "⚖️ 良品求心力 : 不良斥力 のパワーバランス比率 (Normal Ratio)",
+        min_value=0.10,
+        max_value=0.90,
+        value=0.50,
+        step=0.05,
+        help="0.50（デフォルト）で 良品求心力 50% (λ_norm=1.0) : 不良斥力 50% (λ_anom=1.0) の対称スケールになります。良品の分散をより強く絞りたい場合は 0.55〜0.70 へ上げてください。",
     )
-    num_normal_proxies = r0c2.number_input(
-        "良品マルチプロキシ数 (M)",
-        min_value=1,
-        max_value=12,
-        value=4,
-        step=1,
-        help="ロット差や照明ムラによる良品の多様性を M 個のサブセンタープロキシ (推奨 3〜5) で吸収します。",
+    repel_delta = p_col2.slider(
+        "🎯 不良斥力コサインマージン δ (Target Margin)",
+        min_value=-0.50,
+        max_value=0.50,
+        value=0.00,
+        step=0.05,
+        help="max(0, S(x, p_norm) - δ) の目標境界 δ です。デフォルト 0.00（良品プロキシと直交・90度）で [0.0, 1.0] の対称物差しになります。",
     )
-    hard_anomaly_boost = r0c3.number_input(
-        "Top-K 危険不良ブースト (λ_hard)",
-        min_value=1.0,
-        max_value=20.0,
-        value=3.0,
-        step=0.5,
-        help="良品プロキシに最も肉薄している Top-K 個の微細不良（見逃し予備軍）の反発勾配を増幅します。",
-    )
-    nab_normal_ratio = r0c4.slider(
-        "NAB-Sampler 良品比率",
+    nab_normal_ratio = p_col3.slider(
+        "📦 ミニバッチ内 良品サンプル比率 (NAB-Sampler)",
         min_value=0.30,
         max_value=0.70,
         value=0.50,
         step=0.05,
         help="ミニバッチ内の良品比率（デフォルト 0.50 = 良品50% : 全不良モード均等50%）。",
+    )
+
+    r_memo_c1, r0c1, r0c2, r0c3 = st.columns([1.6, 1.4, 1.0, 1.0])
+    session_label = r_memo_c1.text_input(
+        "セッションメモ / 実験名（任意）",
+        value="",
+        placeholder="例: 50:50バランス δ=0.0 M=1",
+        help="学習開始時に自動で Session #0001, #0002 ... が採番されます。",
+    )
+    loss_type = r0c1.selectbox(
+        "距離学習アルゴリズム (Loss Type)",
+        options=["multi_proxy_anchor", "ms_loss"],
+        index=0,
+        help="multi_proxy_anchor (推奨): 50:50 パワーバランスのコサイン求心力・斥力 Loss を使用します。",
+    )
+    num_normal_proxies = r0c2.number_input(
+        "良品プロキシ数 (M)",
+        min_value=1,
+        max_value=12,
+        value=1,
+        step=1,
+        help="単一中心に強く凝集させる場合は M=1（推奨）、複数ロットの広がりを許容する場合は M=2〜4 に設定します。",
+    )
+    hard_anomaly_boost = r0c3.number_input(
+        "Top-K 危険不良 相対優先度 (λ_hard)",
+        min_value=1.0,
+        max_value=20.0,
+        value=3.0,
+        step=0.5,
+        help="不良バッチ内部での相対的な優先度です（平均1.0に自動正規化されるため 50:50 の全体比率は崩れません）。",
     )
 
     st.markdown("#### 2. バックボーン・学習ハイパーパラメータ")
@@ -196,31 +236,30 @@ with st.form("training_config_form"):
         index=0,
     )
     pooling_type = r1c2.selectbox("プーリング層", options=["gem", "avg_max", "gap"], index=0)
-    epochs = r1c3.number_input("学習エポック数", min_value=2, max_value=100, value=10, step=1)
+    epochs = r1c3.number_input("学習エポック数", min_value=2, max_value=100, value=20, step=1)
     batch_size = r1c4.number_input("ミニバッチサイズ", min_value=8, max_value=128, value=32, step=4)
     use_pretrained = r1c5.checkbox(
         "ImageNet事前学習重みを使用",
         value=True,
-        help="ONにすると timm の ImageNet 事前学習済み重みを使用して高識別な特徴を抽出します（オフライン時は自動フォールバック）。",
     )
 
     r2c1, r2c2, r2c3, r2c4 = st.columns(4)
     learning_rate = r2c1.number_input(
-        "学習率 (Learning Rate)", min_value=1e-5, max_value=5e-2, value=3e-3, format="%.4f"
+        "学習率 (Learning Rate)", min_value=1e-5, max_value=5e-2, value=2e-3, format="%.4f"
     )
     tau_sim = r2c2.slider(
-        "学習時基準コサイン類似度閾値 (τ_sim)",
+        "評価基準コサイン類似度閾値 (τ_sim)",
         min_value=-0.80,
         max_value=0.80,
         value=0.0,
         step=0.05,
-        help="デフォルト 0.0（良品プロキシと直交）。学習後の評価画面で任意に変更可能です。",
+        help="デフォルト 0.0（良品プロキシと直交）。学習後の評価画面でもスライダーで自在に変更可能です。",
     )
     w_defect = r2c3.number_input(
-        "不良クラス反発重み (w_defect)", min_value=1.0, max_value=20.0, value=2.5, step=0.5
+        "不良クラス基準重み (w_defect)", min_value=0.1, max_value=10.0, value=1.0, step=0.1
     )
     w_aux = r2c4.number_input(
-        "プロキシ間直交正則化重み (w_ortho)", min_value=0.1, max_value=5.0, value=0.5, step=0.1
+        "プロキシ直交補助重み (w_ortho)", min_value=0.0, max_value=2.0, value=0.2, step=0.05
     )
 
     st.markdown("#### 3. 境界ハードサンプル合成（Defect Transfer ＆ 片方向 Anomalous Mixup / Phase 3）")
@@ -228,13 +267,13 @@ with st.form("training_config_form"):
     enable_boundary_aug = b_c1.checkbox(
         "Defect Transfer ＆ 片方向 Anomalous Mixup を有効化",
         value=True,
-        help="残差サリエンシーによる欠陥転写（Defect Transfer）と良品80〜90%合成（Anomalous Mixup）で境界上のハードサンプルを動的生成し、良品プロキシからの片方向反発のみに作用させます。",
+        help="残差サリエンシーによる欠陥転写（Defect Transfer）と境界補間（Anomalous Mixup）を生成し、緩やかな重み（0.25x）で境界をガードします。",
     )
     mixup_alpha_min = b_c2.number_input(
-        "Anomalous Mixup 最小良品比率 (α_min)", min_value=0.60, max_value=0.92, value=0.80, step=0.02
+        "Anomalous Mixup 最小良品比率 (α_min)", min_value=0.30, max_value=0.85, value=0.55, step=0.05
     )
     mixup_alpha_max = b_c3.number_input(
-        "Anomalous Mixup 最大良品比率 (α_max)", min_value=0.65, max_value=0.96, value=0.90, step=0.02
+        "Anomalous Mixup 最大良品比率 (α_max)", min_value=0.35, max_value=0.90, value=0.75, step=0.05
     )
     class_balance_beta = b_c4.number_input(
         "Class-Balanced Weight β", min_value=0.80, max_value=0.9999, value=0.99, format="%.4f"
@@ -246,7 +285,6 @@ with st.form("training_config_form"):
         "Top-K 指定モード",
         options=["count", "ratio"],
         index=1,
-        help="ratio (推奨): 良品に最も近い上位 q%（例: 0.30=上位30% → 0.15=上位15%）の危険不良を動的ブースト / count: 絶対件数指定",
     )
     default_init = 30.0 if top_k_mode == "count" else 0.30
     default_final = 20.0 if top_k_mode == "count" else 0.15
@@ -262,11 +300,11 @@ with st.form("training_config_form"):
         max_value=500.0,
         value=default_final,
     )
-    gamma_initial = r3c4.number_input("初期反発ペナルティ係数 (γ_init)", min_value=0.1, max_value=5.0, value=0.6)
-    gamma_final = r3c5.number_input("後期反発ペナルティ係数 (γ_final)", min_value=0.1, max_value=10.0, value=1.8)
+    gamma_initial = r3c4.number_input("初期反発係数 (γ_init)", min_value=0.1, max_value=5.0, value=0.6)
+    gamma_final = r3c5.number_input("後期反発係数 (γ_final)", min_value=0.1, max_value=10.0, value=1.5)
 
     submitted = st.form_submit_button(
-        f"🚀 新規セッションNoを採番して学習を開始 (対象データセット: `{active_dataset_name}`)",
+        f"🚀 新規セッションNoを採番して学習を開始 (対象: `{active_dataset_name}` ｜ 求心力 {int(round(normal_loss_ratio*100))}% : 斥力 {int(round((1-normal_loss_ratio)*100))}%)",
         type="primary",
         use_container_width=True,
     )
@@ -286,6 +324,8 @@ if submitted:
             "batch_size": int(batch_size),
             "learning_rate": float(learning_rate),
             "tau_sim": float(tau_sim),
+            "normal_loss_ratio": float(normal_loss_ratio),
+            "repel_delta": float(repel_delta),
             "num_normal_proxies": int(num_normal_proxies),
             "hard_anomaly_boost": float(hard_anomaly_boost),
             "class_balance_beta": float(class_balance_beta),
@@ -308,7 +348,7 @@ if submitted:
     assigned_session_num = job.get("session_number")
     st.info(
         f"🗂️ **学習セッション採番完了: `Session #{assigned_session_num:04d}` (`{assigned_session_id}`)** ｜ "
-        f"データセット: `{active_dataset_name}`"
+        f"データセット: `{active_dataset_name}` ｜ パワーバランス: 良品求心力 {int(round(normal_loss_ratio*100))}% : 不良斥力 {int(round((1-normal_loss_ratio)*100))}%"
         if assigned_session_num
         else f"学習ジョブ `{job_id}` を開始しました..."
     )

@@ -198,25 +198,29 @@ if all_sessions:
         or st.session_state["step6_active_session"] not in session_ids
     ):
         st.session_state["step6_active_session"] = session_ids[0]
+        st.session_state["step6_sidebar_session_select"] = session_ids[0]
+        st.session_state["step6_main_session_select"] = session_ids[0]
 
-    def _on_sidebar_session_change() -> None:
-        st.session_state["step6_active_session"] = st.session_state["step6_sidebar_session_select"]
-        st.session_state["step6_main_session_select"] = st.session_state["step6_active_session"]
+    def _on_sb_session_change() -> None:
+        val = st.session_state.get("step6_sidebar_session_select")
+        if val in session_ids:
+            st.session_state["step6_active_session"] = val
+            st.session_state["step6_main_session_select"] = val
 
     def _on_main_session_change() -> None:
-        st.session_state["step6_active_session"] = st.session_state["step6_main_session_select"]
-        st.session_state["step6_sidebar_session_select"] = st.session_state["step6_active_session"]
+        val = st.session_state.get("step6_main_session_select")
+        if val in session_ids:
+            st.session_state["step6_active_session"] = val
+            st.session_state["step6_sidebar_session_select"] = val
 
-    active_sess_idx = session_ids.index(st.session_state["step6_active_session"])
     with st.sidebar:
         st.markdown("### 🗂️ 評価対象セッションNo切替")
         st.selectbox(
             "呼び出す学習セッションNo",
             options=session_ids,
-            index=active_sess_idx,
             format_func=lambda sid: session_fmt.get(sid, sid),
             key="step6_sidebar_session_select",
-            on_change=_on_sidebar_session_change,
+            on_change=_on_sb_session_change,
         )
 
     top_s_col1, top_s_col2 = st.columns([2.2, 1.8])
@@ -224,7 +228,6 @@ if all_sessions:
         st.selectbox(
             "🗂️ 評価・振り返り対象の学習セッションNoを選択 (過去の学習モデル・履歴を即座に呼び出し)",
             options=session_ids,
-            index=active_sess_idx,
             format_func=lambda sid: session_fmt.get(sid, sid),
             key="step6_main_session_select",
             on_change=_on_main_session_change,
@@ -259,6 +262,12 @@ else:
 
     if "step6_selected_epoch" not in st.session_state or st.session_state["step6_selected_epoch"] not in epoch_numbers:
         st.session_state["step6_selected_epoch"] = default_ep_val
+    st.session_state["step6_epoch_dropdown"] = int(st.session_state["step6_selected_epoch"])
+
+    def _on_epoch_dropdown_change() -> None:
+        val = st.session_state.get("step6_epoch_dropdown")
+        if val in epoch_numbers:
+            st.session_state["step6_selected_epoch"] = int(val)
 
     # Top Epoch & Threshold Controls
     ctrl_c1, ctrl_c2, ctrl_c3, ctrl_c4, ctrl_c5 = st.columns([0.7, 1.3, 0.7, 0.9, 2.4])
@@ -267,30 +276,32 @@ else:
     with ctrl_c1:
         st.write("")
         if st.button("◀ Epoch -1", use_container_width=True, disabled=(cur_ep_idx <= 0)):
-            st.session_state["step6_selected_epoch"] = epoch_numbers[cur_ep_idx - 1]
+            new_ep = epoch_numbers[cur_ep_idx - 1]
+            st.session_state["step6_selected_epoch"] = new_ep
+            st.session_state["step6_epoch_dropdown"] = new_ep
             st.rerun()
 
     with ctrl_c2:
-        chosen_ep = st.selectbox(
+        st.selectbox(
             "評価対象エポック (学習回数)",
             options=epoch_numbers,
-            index=cur_ep_idx,
             key="step6_epoch_dropdown",
+            on_change=_on_epoch_dropdown_change,
         )
-        if chosen_ep != st.session_state["step6_selected_epoch"]:
-            st.session_state["step6_selected_epoch"] = int(chosen_ep)
-            st.rerun()
 
     with ctrl_c3:
         st.write("")
         if st.button("Epoch +1 ▶", use_container_width=True, disabled=(cur_ep_idx >= len(epoch_numbers) - 1)):
-            st.session_state["step6_selected_epoch"] = epoch_numbers[cur_ep_idx + 1]
+            new_ep = epoch_numbers[cur_ep_idx + 1]
+            st.session_state["step6_selected_epoch"] = new_ep
+            st.session_state["step6_epoch_dropdown"] = new_ep
             st.rerun()
 
     with ctrl_c4:
         st.write("")
         if st.button(f"★ Best (Ep {default_ep_val})", use_container_width=True):
             st.session_state["step6_selected_epoch"] = default_ep_val
+            st.session_state["step6_epoch_dropdown"] = default_ep_val
             st.rerun()
 
     selected_epoch = int(st.session_state["step6_selected_epoch"])
