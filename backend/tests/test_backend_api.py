@@ -338,3 +338,247 @@ def test_multi_dataset_catalog_switching_and_session_recall(tmp_path: Path, monk
     # sims: [0.8(TN), 0.7(TN), 0.6(TN), -0.1(FP), -0.5(TP), 0.2(FN)] at tau_sim=0.0
     assert cm_cats == ["TN", "TN", "TN", "FP", "TP", "FN"]
 
+
+def test_normal_subcluster_stratified_split_and_auto_proxy_schema(tmp_path: Path, monkeypatch) -> None:
+    """Verify 6:2:2 split stratifies minority normal_subcluster_id across train/val/test and TrainingTriggerRequest defaults to M=0 (Auto)."""
+    from app.schemas.api_models import TrainingTriggerRequest
+
+    req_default = TrainingTriggerRequest()
+    assert req_default.num_normal_proxies == 0
+
+    monkeypatch.setattr(BackendConfig, "DATA_DIR", tmp_path)
+    client = TestClient(app)
+
+    # Seed clustering_result.json with 20 normal mode 0, 5 minority normal mode 1, and 5 scratch defects
+    cluster_items = []
+    for i in range(20):
+        cluster_items.append(
+            {
+                "sample_id": f"n0_{i}",
+                "file_name": f"n0_{i}.png",
+                "image_path": f"/app/data/raw/n0_{i}.png",
+                "cluster_id": 0,
+                "normal_subcluster_id": 0,
+            }
+        )
+    for i in range(5):
+        cluster_items.append(
+            {
+                "sample_id": f"n1_{i}",
+                "file_name": f"n1_{i}.png",
+                "image_path": f"/app/data/raw/n1_{i}.png",
+                "cluster_id": 0,
+                "normal_subcluster_id": 1,
+            }
+        )
+    for i in range(5):
+        cluster_items.append(
+            {
+                "sample_id": f"def_{i}",
+                "file_name": f"def_{i}.png",
+                "image_path": f"/app/data/raw/def_{i}.png",
+                "cluster_id": 1,
+                "normal_subcluster_id": -1,
+            }
+        )
+
+    man_dir = BackendConfig.manifests_dir("default")
+    (man_dir / "clustering_result.json").write_text(
+        json.dumps(
+            {
+                "dataset_name": "default",
+                "total_samples": len(cluster_items),
+                "detected_normal_subclusters": 2,
+                "items": cluster_items,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    ann_resp = client.post(
+        "/api/v1/annotations",
+        json={
+            "cluster_labels": {"0": "normal", "1": "scratch"},
+            "normal_class_name": "normal",
+        },
+    )
+    assert ann_resp.status_code == 200
+    ann_json = json.loads((man_dir / "annotations.json").read_text(encoding="utf-8"))
+    minority_splits = [
+        it["split"]
+        for it in ann_json["items"]
+        if not it["is_defect"] and int(it.get("normal_subcluster_id", 0)) == 1
+    ]
+    assert len(minority_splits) == 5
+    # Minority normal subcluster (5 items) must appear in train (3), val (1), and test (1)!
+    assert minority_splits.count("train") == 3
+    assert minority_splits.count("val") == 1
+    assert minority_splits.count("test") == 1
+
+
+def test_training_trigger_exact_ui_payload_and_proxy_error_forwarding(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Verify exact 28-field Streamlit UI payload passes `POST /api/v1/jobs/training` and error details propagate cleanly."""
+    import sys
+    import httpx
+    from app.routers import jobs_proxy
+
+    monkeypatch.setattr(BackendConfig, "DATA_DIR", tmp_path)
+    client = TestClient(app)
+
+    captured_payloads: list[dict] = []
+
+    class _DummyTrainerClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            return False
+
+        def post(self, url: str, json: dict):
+            captured_payloads.append(json)
+            req_obj = httpx.Request("POST", url)
+            if json.get("session_label") == "force-422":
+                return httpx.Response(
+                    422,
+                    json={"detail": [{"loc": ["body", "epochs"], "msg": "mock validation error"}]},
+                    request=req_obj,
+                )
+            return httpx.Response(
+                200,
+                json={
+                    "job_id": "train-12345678",
+                    "job_type": "training",
+                    "status": "queued",
+                    "dataset_name": json["dataset_name"],
+                    "session_id": "session_0001",
+                    "session_number": 1,
+                },
+                request=req_obj,
+            )
+
+    monkeypatch.setattr(jobs_proxy.httpx, "Client", _DummyTrainerClient)
+
+    ui_payload = {
+        "dataset_name": "default",
+        "session_label": "Auto-M UI Run",
+        "loss_type": "multi_proxy_anchor",
+        "backbone_name": "efficientnet_b3",
+        "pooling_type": "gem",
+        "pretrained": True,
+        "freeze_backbone": True,
+        "unfreeze_last_block": False,
+        "epochs": 20,
+        "batch_size": 32,
+        "learning_rate": 0.002,
+        "tau_sim": 0.0,
+        "normal_loss_ratio": 0.5,
+        "repel_delta": 0.0,
+        "num_normal_proxies": 0,
+        "hard_anomaly_boost": 3.0,
+        "class_balance_beta": 0.99,
+        "enable_boundary_aug": True,
+        "mixup_alpha_min": 0.55,
+        "mixup_alpha_max": 0.75,
+        "nab_normal_ratio": 0.5,
+        "top_k_mode": "ratio",
+        "top_k_initial": 0.3,
+        "top_k_final": 0.15,
+        "gamma_initial": 0.6,
+        "gamma_final": 1.5,
+        "w_defect": 0.1,
+        "w_aux": 0.0,
+        "full_snapshot_interval": 10,
+    }
+    resp = client.post("/api/v1/jobs/training", json=ui_payload)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["job_id"] == "train-12345678"
+    assert captured_payloads[-1]["num_normal_proxies"] == 0
+
+    # Downstream 422 must propagate as 422 with structured detail (not swallowed as 502)
+    err_resp = client.post(
+        "/api/v1/jobs/training",
+        json={**ui_payload, "session_label": "force-422"},
+    )
+    assert err_resp.status_code == 422
+    assert err_resp.json()["detail"][0]["msg"] == "mock validation error"
+
+    # Also verify frontend BackendApiClient backward-compatibility retry if an old server rejects M=0
+    fe_root = str(Path(__file__).resolve().parents[2] / "frontend" / "app")
+    if fe_root not in sys.path:
+        sys.path.insert(0, fe_root)
+    import api_client as fe_api_client
+
+    sent_m_values: list[int] = []
+
+    class _StaleThenSuccessClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb) -> bool:
+            return False
+
+        def post(self, url: str, json: dict):
+            m_val = int(json["num_normal_proxies"])
+            sent_m_values.append(m_val)
+            req_obj = httpx.Request("POST", url)
+            if m_val == 0:
+                return httpx.Response(
+                    422,
+                    json={
+                        "detail": [
+                            {
+                                "type": "greater_than_equal",
+                                "loc": ["body", "num_normal_proxies"],
+                                "msg": "Input should be greater than or equal to 1",
+                            }
+                        ]
+                    },
+                    request=req_obj,
+                )
+            return httpx.Response(200, json={"job_id": "train-compat", "status": "queued"}, request=req_obj)
+
+    monkeypatch.setattr(fe_api_client.httpx, "Client", _StaleThenSuccessClient)
+    fe_client = fe_api_client.BackendApiClient(base_url="http://api-backend:18000")
+    compat_res = fe_client.trigger_training(ui_payload)
+    assert compat_res["job_id"] == "train-compat"
+    assert sent_m_values == [0, 1]
+
+    # Verify TrainingTriggerRequest model_validator normalizes count/ratio top_k & inverted alpha bounds
+    from app.schemas.api_models import TrainingTriggerRequest
+
+    req_count_from_ratio = TrainingTriggerRequest(
+        top_k_mode="count",
+        top_k_initial=0.30,
+        top_k_final=0.15,
+        mixup_alpha_min=0.80,
+        mixup_alpha_max=0.45,
+    )
+    assert req_count_from_ratio.top_k_initial == 30.0
+    assert req_count_from_ratio.top_k_final == 15.0
+    assert req_count_from_ratio.mixup_alpha_min == 0.45
+    assert req_count_from_ratio.mixup_alpha_max == 0.80
+
+    # Verify empty running session_0002 does NOT leak root artifacts from session_0001
+    s2_dir = BackendConfig.session_dir("session_0002")
+    (s2_dir / "session_meta.json").write_text(
+        json.dumps({"session_id": "session_0002", "session_number": 2, "status": "running"}),
+        encoding="utf-8",
+    )
+    with open(BackendConfig.artifacts_dir() / "epoch_0001_light.pkl", "wb") as f:
+        pickle.dump({"epoch": 1, "cosine_similarities": [], "is_defect": [], "splits": []}, f)
+    ev_s2 = client.get("/api/v1/evaluations?session_id=session_0002")
+    assert ev_s2.status_code == 200
+    assert ev_s2.json()["session_id"] == "session_0002"
+    assert ev_s2.json()["total_epochs"] == 0
+
+
+
+

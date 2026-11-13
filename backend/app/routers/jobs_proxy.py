@@ -14,6 +14,18 @@ from app.schemas.api_models import ClusteringTriggerRequest, TrainingTriggerRequ
 router = APIRouter(prefix="/api/v1/jobs", tags=["jobs-proxy"])
 
 
+def _extract_error_detail(resp: httpx.Response, fallback: str) -> Any:
+    """Safely extract structured `detail` or plain-text error payload from `trainer-service`."""
+    try:
+        body = resp.json()
+        if isinstance(body, dict) and "detail" in body:
+            return body["detail"]
+        return body
+    except Exception:
+        text = (resp.text or "").strip()
+        return text if text else fallback
+
+
 @router.post("/clustering")
 def trigger_clustering_job(req: ClusteringTriggerRequest) -> dict[str, Any]:
     """Forward Phase 1 clustering job request to `trainer-service`."""
@@ -24,9 +36,13 @@ def trigger_clustering_job(req: ClusteringTriggerRequest) -> dict[str, Any]:
     try:
         with httpx.Client(timeout=30.0) as client:
             resp = client.post(url, json=payload)
-            if resp.status_code == 409:
-                raise HTTPException(status_code=409, detail=resp.json().get("detail", "Job conflict"))
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                raise HTTPException(
+                    status_code=resp.status_code,
+                    detail=_extract_error_detail(
+                        resp, f"Trainer rejected clustering request ({resp.status_code})"
+                    ),
+                )
             return resp.json()
     except HTTPException:
         raise
@@ -44,9 +60,13 @@ def trigger_training_job(req: TrainingTriggerRequest) -> dict[str, Any]:
     try:
         with httpx.Client(timeout=30.0) as client:
             resp = client.post(url, json=payload)
-            if resp.status_code == 409:
-                raise HTTPException(status_code=409, detail=resp.json().get("detail", "Job conflict"))
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                raise HTTPException(
+                    status_code=resp.status_code,
+                    detail=_extract_error_detail(
+                        resp, f"Trainer rejected training request ({resp.status_code})"
+                    ),
+                )
             return resp.json()
     except HTTPException:
         raise
@@ -69,6 +89,9 @@ def get_job_status_proxy(job_id: str) -> dict[str, Any]:
     # Fallback to shared volume job status file if trainer HTTP is momentarily busy
     job_file = BackendConfig.artifacts_dir() / "jobs" / f"{job_id}.json"
     if job_file.exists():
-        return json.loads(job_file.read_text(encoding="utf-8"))
+        try:
+            return json.loads(job_file.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            pass
 
     raise HTTPException(status_code=404, detail=f"Job `{job_id}` not found.")

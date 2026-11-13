@@ -1,0 +1,2656 @@
+{
+  "dataset_name": "bottle3",
+  "updated_at": "2026-11-12T08:10:02.434201+00:00",
+  "total_samples": 292,
+  "normal_class_name": "nomal",
+  "class_map": {
+    "nomal": 0,
+    "anomaly_cluster_1": 1,
+    "anomaly_cluster_4": 2
+  },
+  "class_counts": {
+    "anomaly_cluster_1": 33,
+    "anomaly_cluster_4": 30,
+    "nomal": 229
+  },
+  "split_counts": {
+    "train": 174,
+    "val": 59,
+    "test": 59
+  },
+  "split_ratios": {
+    "train": 0.6,
+    "val": 0.2,
+    "test": 0.2
+  },
+  "items": [
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_1/test_broken_large_004_015-75.png",
+      "file_name": "test_broken_large_004_015-75.png",
+      "cluster_id": 1,
+      "label_name": "anomaly_cluster_1",
+      "label_id": 1,
+      "is_defect": true,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_1/test_broken_large_010_005-94.png",
+      "file_name": "test_broken_large_010_005-94.png",
+      "cluster_id": 1,
+      "label_name": "anomaly_cluster_1",
+      "label_id": 1,
+      "is_defect": true,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_1/test_broken_small_000_002-93.png",
+      "file_name": "test_broken_small_000_002-93.png",
+      "cluster_id": 1,
+      "label_name": "anomaly_cluster_1",
+      "label_id": 1,
+      "is_defect": true,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_1/test_broken_small_004_015-74.png",
+      "file_name": "test_broken_small_004_015-74.png",
+      "cluster_id": 1,
+      "label_name": "anomaly_cluster_1",
+      "label_id": 1,
+      "is_defect": true,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_1/test_broken_small_008_010-82.png",
+      "file_name": "test_broken_small_008_010-82.png",
+      "cluster_id": 1,
+      "label_name": "anomaly_cluster_1",
+      "label_id": 1,
+      "is_defect": true,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_1/test_broken_small_012_007-93.png",
+      "file_name": "test_broken_small_012_007-93.png",
+      "cluster_id": 1,
+      "label_name": "anomaly_cluster_1",
+      "label_id": 1,
+      "is_defect": true,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_1/test_broken_small_013_013-76.png",
+      "file_name": "test_broken_small_013_013-76.png",
+      "cluster_id": 1,
+      "label_name": "anomaly_cluster_1",
+      "label_id": 1,
+      "is_defect": true,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_1/test_broken_small_016_008-92.png",
+      "file_name": "test_broken_small_016_008-92.png",
+      "cluster_id": 2,
+      "label_name": "anomaly_cluster_4",
+      "label_id": 2,
+      "is_defect": true,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_1/test_broken_small_017_020-45.png",
+      "file_name": "test_broken_small_017_020-45.png",
+      "cluster_id": 1,
+      "label_name": "anomaly_cluster_1",
+      "label_id": 1,
+      "is_defect": true,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_1/test_broken_small_018_021-42.png",
+      "file_name": "test_broken_small_018_021-42.png",
+      "cluster_id": 1,
+      "label_name": "anomaly_cluster_1",
+      "label_id": 1,
+      "is_defect": true,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_1/test_contamination_000_002-96.png",
+      "file_name": "test_contamination_000_002-96.png",
+      "cluster_id": 2,
+      "label_name": "anomaly_cluster_4",
+      "label_id": 2,
+      "is_defect": true,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_1/test_contamination_003_003-96.png",
+      "file_name": "test_contamination_003_003-96.png",
+      "cluster_id": 1,
+      "label_name": "anomaly_cluster_1",
+      "label_id": 1,
+      "is_defect": true,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_1/test_contamination_009_004-96.png",
+      "file_name": "test_contamination_009_004-96.png",
+      "cluster_id": 1,
+      "label_name": "anomaly_cluster_1",
+      "label_id": 1,
+      "is_defect": true,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_1/test_contamination_019_019-49.png",
+      "file_name": "test_contamination_019_019-49.png",
+      "cluster_id": 1,
+      "label_name": "anomaly_cluster_1",
+      "label_id": 1,
+      "is_defect": true,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_1/test_contamination_020_018-57.png",
+      "file_name": "test_contamination_020_018-57.png",
+      "cluster_id": 1,
+      "label_name": "anomaly_cluster_1",
+      "label_id": 1,
+      "is_defect": true,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_2/test_broken_large_005_001-94.png",
+      "file_name": "test_broken_large_005_001-94.png",
+      "cluster_id": 2,
+      "label_name": "anomaly_cluster_4",
+      "label_id": 2,
+      "is_defect": true,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_2/test_broken_large_007_014-76.png",
+      "file_name": "test_broken_large_007_014-76.png",
+      "cluster_id": 1,
+      "label_name": "anomaly_cluster_1",
+      "label_id": 1,
+      "is_defect": true,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_2/test_broken_large_011_011-81.png",
+      "file_name": "test_broken_large_011_011-81.png",
+      "cluster_id": 2,
+      "label_name": "anomaly_cluster_4",
+      "label_id": 2,
+      "is_defect": true,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_2/test_broken_large_016_008-93.png",
+      "file_name": "test_broken_large_016_008-93.png",
+      "cluster_id": 1,
+      "label_name": "anomaly_cluster_1",
+      "label_id": 1,
+      "is_defect": true,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_2/test_broken_large_017_009-92.png",
+      "file_name": "test_broken_large_017_009-92.png",
+      "cluster_id": 1,
+      "label_name": "anomaly_cluster_1",
+      "label_id": 1,
+      "is_defect": true,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_2/test_broken_small_001_016-70.png",
+      "file_name": "test_broken_small_001_016-70.png",
+      "cluster_id": 2,
+      "label_name": "anomaly_cluster_4",
+      "label_id": 2,
+      "is_defect": true,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_2/test_broken_small_002_017-60.png",
+      "file_name": "test_broken_small_002_017-60.png",
+      "cluster_id": 1,
+      "label_name": "anomaly_cluster_1",
+      "label_id": 1,
+      "is_defect": true,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_2/test_broken_small_003_003-93.png",
+      "file_name": "test_broken_small_003_003-93.png",
+      "cluster_id": 1,
+      "label_name": "anomaly_cluster_1",
+      "label_id": 1,
+      "is_defect": true,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_2/test_broken_small_005_001-93.png",
+      "file_name": "test_broken_small_005_001-93.png",
+      "cluster_id": 2,
+      "label_name": "anomaly_cluster_4",
+      "label_id": 2,
+      "is_defect": true,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_2/test_broken_small_006_000-93.png",
+      "file_name": "test_broken_small_006_000-93.png",
+      "cluster_id": 2,
+      "label_name": "anomaly_cluster_4",
+      "label_id": 2,
+      "is_defect": true,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_2/test_broken_small_007_014-75.png",
+      "file_name": "test_broken_small_007_014-75.png",
+      "cluster_id": 2,
+      "label_name": "anomaly_cluster_4",
+      "label_id": 2,
+      "is_defect": true,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_2/test_broken_small_009_004-93.png",
+      "file_name": "test_broken_small_009_004-93.png",
+      "cluster_id": 1,
+      "label_name": "anomaly_cluster_1",
+      "label_id": 1,
+      "is_defect": true,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_2/test_broken_small_011_011-80.png",
+      "file_name": "test_broken_small_011_011-80.png",
+      "cluster_id": 2,
+      "label_name": "anomaly_cluster_4",
+      "label_id": 2,
+      "is_defect": true,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_2/test_broken_small_014_012-77.png",
+      "file_name": "test_broken_small_014_012-77.png",
+      "cluster_id": 1,
+      "label_name": "anomaly_cluster_1",
+      "label_id": 1,
+      "is_defect": true,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_2/test_broken_small_015_006-93.png",
+      "file_name": "test_broken_small_015_006-93.png",
+      "cluster_id": 1,
+      "label_name": "anomaly_cluster_1",
+      "label_id": 1,
+      "is_defect": true,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_2/test_broken_small_019_009-91.png",
+      "file_name": "test_broken_small_019_009-91.png",
+      "cluster_id": 2,
+      "label_name": "anomaly_cluster_4",
+      "label_id": 2,
+      "is_defect": true,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_2/test_broken_small_020_019-46.png",
+      "file_name": "test_broken_small_020_019-46.png",
+      "cluster_id": 2,
+      "label_name": "anomaly_cluster_4",
+      "label_id": 2,
+      "is_defect": true,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_2/test_broken_small_021_018-54.png",
+      "file_name": "test_broken_small_021_018-54.png",
+      "cluster_id": 1,
+      "label_name": "anomaly_cluster_1",
+      "label_id": 1,
+      "is_defect": true,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_2/test_contamination_007_014-78.png",
+      "file_name": "test_contamination_007_014-78.png",
+      "cluster_id": 2,
+      "label_name": "anomaly_cluster_4",
+      "label_id": 2,
+      "is_defect": true,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_3/test_broken_large_000_002-94.png",
+      "file_name": "test_broken_large_000_002-94.png",
+      "cluster_id": 2,
+      "label_name": "anomaly_cluster_4",
+      "label_id": 2,
+      "is_defect": true,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_3/test_broken_large_001_016-71.png",
+      "file_name": "test_broken_large_001_016-71.png",
+      "cluster_id": 1,
+      "label_name": "anomaly_cluster_1",
+      "label_id": 1,
+      "is_defect": true,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_3/test_broken_large_002_017-61.png",
+      "file_name": "test_broken_large_002_017-61.png",
+      "cluster_id": 1,
+      "label_name": "anomaly_cluster_1",
+      "label_id": 1,
+      "is_defect": true,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_3/test_broken_large_003_003-94.png",
+      "file_name": "test_broken_large_003_003-94.png",
+      "cluster_id": 2,
+      "label_name": "anomaly_cluster_4",
+      "label_id": 2,
+      "is_defect": true,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_3/test_broken_large_006_000-94.png",
+      "file_name": "test_broken_large_006_000-94.png",
+      "cluster_id": 1,
+      "label_name": "anomaly_cluster_1",
+      "label_id": 1,
+      "is_defect": true,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_3/test_broken_large_008_010-83.png",
+      "file_name": "test_broken_large_008_010-83.png",
+      "cluster_id": 1,
+      "label_name": "anomaly_cluster_1",
+      "label_id": 1,
+      "is_defect": true,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_3/test_broken_large_009_004-94.png",
+      "file_name": "test_broken_large_009_004-94.png",
+      "cluster_id": 1,
+      "label_name": "anomaly_cluster_1",
+      "label_id": 1,
+      "is_defect": true,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_3/test_broken_large_012_007-94.png",
+      "file_name": "test_broken_large_012_007-94.png",
+      "cluster_id": 1,
+      "label_name": "anomaly_cluster_1",
+      "label_id": 1,
+      "is_defect": true,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_3/test_broken_large_013_013-77.png",
+      "file_name": "test_broken_large_013_013-77.png",
+      "cluster_id": 1,
+      "label_name": "anomaly_cluster_1",
+      "label_id": 1,
+      "is_defect": true,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_3/test_broken_large_014_012-78.png",
+      "file_name": "test_broken_large_014_012-78.png",
+      "cluster_id": 1,
+      "label_name": "anomaly_cluster_1",
+      "label_id": 1,
+      "is_defect": true,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_3/test_broken_large_015_006-94.png",
+      "file_name": "test_broken_large_015_006-94.png",
+      "cluster_id": 1,
+      "label_name": "anomaly_cluster_1",
+      "label_id": 1,
+      "is_defect": true,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_3/test_broken_large_018_019-47.png",
+      "file_name": "test_broken_large_018_019-47.png",
+      "cluster_id": 1,
+      "label_name": "anomaly_cluster_1",
+      "label_id": 1,
+      "is_defect": true,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_3/test_broken_large_019_018-55.png",
+      "file_name": "test_broken_large_019_018-55.png",
+      "cluster_id": 1,
+      "label_name": "anomaly_cluster_1",
+      "label_id": 1,
+      "is_defect": true,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_4/test_broken_small_010_005-93.png",
+      "file_name": "test_broken_small_010_005-93.png",
+      "cluster_id": 2,
+      "label_name": "anomaly_cluster_4",
+      "label_id": 2,
+      "is_defect": true,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_4/test_contamination_001_016-73.png",
+      "file_name": "test_contamination_001_016-73.png",
+      "cluster_id": 2,
+      "label_name": "anomaly_cluster_4",
+      "label_id": 2,
+      "is_defect": true,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_4/test_contamination_002_017-63.png",
+      "file_name": "test_contamination_002_017-63.png",
+      "cluster_id": 2,
+      "label_name": "anomaly_cluster_4",
+      "label_id": 2,
+      "is_defect": true,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_4/test_contamination_004_015-77.png",
+      "file_name": "test_contamination_004_015-77.png",
+      "cluster_id": 2,
+      "label_name": "anomaly_cluster_4",
+      "label_id": 2,
+      "is_defect": true,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_4/test_contamination_005_001-96.png",
+      "file_name": "test_contamination_005_001-96.png",
+      "cluster_id": 2,
+      "label_name": "anomaly_cluster_4",
+      "label_id": 2,
+      "is_defect": true,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_4/test_contamination_006_000-96.png",
+      "file_name": "test_contamination_006_000-96.png",
+      "cluster_id": 2,
+      "label_name": "anomaly_cluster_4",
+      "label_id": 2,
+      "is_defect": true,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_4/test_contamination_008_010-85.png",
+      "file_name": "test_contamination_008_010-85.png",
+      "cluster_id": 2,
+      "label_name": "anomaly_cluster_4",
+      "label_id": 2,
+      "is_defect": true,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_4/test_contamination_010_005-96.png",
+      "file_name": "test_contamination_010_005-96.png",
+      "cluster_id": 2,
+      "label_name": "anomaly_cluster_4",
+      "label_id": 2,
+      "is_defect": true,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_4/test_contamination_011_011-83.png",
+      "file_name": "test_contamination_011_011-83.png",
+      "cluster_id": 2,
+      "label_name": "anomaly_cluster_4",
+      "label_id": 2,
+      "is_defect": true,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_4/test_contamination_012_007-96.png",
+      "file_name": "test_contamination_012_007-96.png",
+      "cluster_id": 2,
+      "label_name": "anomaly_cluster_4",
+      "label_id": 2,
+      "is_defect": true,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_4/test_contamination_013_013-79.png",
+      "file_name": "test_contamination_013_013-79.png",
+      "cluster_id": 2,
+      "label_name": "anomaly_cluster_4",
+      "label_id": 2,
+      "is_defect": true,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_4/test_contamination_014_012-80.png",
+      "file_name": "test_contamination_014_012-80.png",
+      "cluster_id": 2,
+      "label_name": "anomaly_cluster_4",
+      "label_id": 2,
+      "is_defect": true,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_4/test_contamination_015_006-96.png",
+      "file_name": "test_contamination_015_006-96.png",
+      "cluster_id": 2,
+      "label_name": "anomaly_cluster_4",
+      "label_id": 2,
+      "is_defect": true,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_4/test_contamination_016_008-95.png",
+      "file_name": "test_contamination_016_008-95.png",
+      "cluster_id": 2,
+      "label_name": "anomaly_cluster_4",
+      "label_id": 2,
+      "is_defect": true,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_4/test_contamination_017_020-46.png",
+      "file_name": "test_contamination_017_020-46.png",
+      "cluster_id": 2,
+      "label_name": "anomaly_cluster_4",
+      "label_id": 2,
+      "is_defect": true,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/anomaly_cluster_4/test_contamination_018_009-94.png",
+      "file_name": "test_contamination_018_009-94.png",
+      "cluster_id": 2,
+      "label_name": "anomaly_cluster_4",
+      "label_id": 2,
+      "is_defect": true,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/test_good_000_002-95.png",
+      "file_name": "test_good_000_002-95.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/test_good_001_016-72.png",
+      "file_name": "test_good_001_016-72.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/test_good_002_017-62.png",
+      "file_name": "test_good_002_017-62.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/test_good_003_003-95.png",
+      "file_name": "test_good_003_003-95.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/test_good_004_015-76.png",
+      "file_name": "test_good_004_015-76.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/test_good_005_001-95.png",
+      "file_name": "test_good_005_001-95.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/test_good_006_000-95.png",
+      "file_name": "test_good_006_000-95.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/test_good_007_014-77.png",
+      "file_name": "test_good_007_014-77.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/test_good_008_010-84.png",
+      "file_name": "test_good_008_010-84.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/test_good_009_004-95.png",
+      "file_name": "test_good_009_004-95.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/test_good_010_005-95.png",
+      "file_name": "test_good_010_005-95.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/test_good_011_011-82.png",
+      "file_name": "test_good_011_011-82.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/test_good_012_007-95.png",
+      "file_name": "test_good_012_007-95.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/test_good_013_013-78.png",
+      "file_name": "test_good_013_013-78.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/test_good_014_012-79.png",
+      "file_name": "test_good_014_012-79.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/test_good_015_006-95.png",
+      "file_name": "test_good_015_006-95.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/test_good_016_008-94.png",
+      "file_name": "test_good_016_008-94.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/test_good_017_009-93.png",
+      "file_name": "test_good_017_009-93.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/test_good_018_019-48.png",
+      "file_name": "test_good_018_019-48.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/test_good_019_018-56.png",
+      "file_name": "test_good_019_018-56.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_000_176-13.png",
+      "file_name": "train_good_000_176-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_001_162-13.png",
+      "file_name": "train_good_001_162-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_002_189-13.png",
+      "file_name": "train_good_002_189-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_003_002-92.png",
+      "file_name": "train_good_003_002-92.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_004_016-69.png",
+      "file_name": "train_good_004_016-69.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_005_200-13.png",
+      "file_name": "train_good_005_200-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_006_201-13.png",
+      "file_name": "train_good_006_201-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_007_017-59.png",
+      "file_name": "train_good_007_017-59.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_008_003-92.png",
+      "file_name": "train_good_008_003-92.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_009_188-13.png",
+      "file_name": "train_good_009_188-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_010_163-13.png",
+      "file_name": "train_good_010_163-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_011_177-13.png",
+      "file_name": "train_good_011_177-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_012_149-13.png",
+      "file_name": "train_good_012_149-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_013_161-13.png",
+      "file_name": "train_good_013_161-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_014_175-13.png",
+      "file_name": "train_good_014_175-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_015_029-22.png",
+      "file_name": "train_good_015_029-22.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_016_015-73.png",
+      "file_name": "train_good_016_015-73.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_017_001-92.png",
+      "file_name": "train_good_017_001-92.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_018_203-13.png",
+      "file_name": "train_good_018_203-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_019_202-13.png",
+      "file_name": "train_good_019_202-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_020_000-92.png",
+      "file_name": "train_good_020_000-92.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_021_014-74.png",
+      "file_name": "train_good_021_014-74.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_022_028-22.png",
+      "file_name": "train_good_022_028-22.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_023_174-13.png",
+      "file_name": "train_good_023_174-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_024_160-13.png",
+      "file_name": "train_good_024_160-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_025_148-13.png",
+      "file_name": "train_good_025_148-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_026_164-13.png",
+      "file_name": "train_good_026_164-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_027_170-13.png",
+      "file_name": "train_good_027_170-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_028_158-13.png",
+      "file_name": "train_good_028_158-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_029_010-81.png",
+      "file_name": "train_good_029_010-81.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_030_004-92.png",
+      "file_name": "train_good_030_004-92.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_031_038-18.png",
+      "file_name": "train_good_031_038-18.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_032_206-13.png",
+      "file_name": "train_good_032_206-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_033_207-13.png",
+      "file_name": "train_good_033_207-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_034_039-18.png",
+      "file_name": "train_good_034_039-18.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_035_005-92.png",
+      "file_name": "train_good_035_005-92.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_036_011-79.png",
+      "file_name": "train_good_036_011-79.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_037_159-13.png",
+      "file_name": "train_good_037_159-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_038_171-13.png",
+      "file_name": "train_good_038_171-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_039_165-13.png",
+      "file_name": "train_good_039_165-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_040_173-13.png",
+      "file_name": "train_good_040_173-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_041_167-13.png",
+      "file_name": "train_good_041_167-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_042_198-13.png",
+      "file_name": "train_good_042_198-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_043_007-92.png",
+      "file_name": "train_good_043_007-92.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_044_013-75.png",
+      "file_name": "train_good_044_013-75.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_045_205-13.png",
+      "file_name": "train_good_045_205-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_046_204-13.png",
+      "file_name": "train_good_046_204-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_047_012-76.png",
+      "file_name": "train_good_047_012-76.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_048_006-92.png",
+      "file_name": "train_good_048_006-92.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_049_199-13.png",
+      "file_name": "train_good_049_199-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_050_166-13.png",
+      "file_name": "train_good_050_166-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_051_172-13.png",
+      "file_name": "train_good_051_172-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_052_129-13.png",
+      "file_name": "train_good_052_129-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_053_115-13.png",
+      "file_name": "train_good_053_115-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_054_101-13.png",
+      "file_name": "train_good_054_101-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_055_049-16.png",
+      "file_name": "train_good_055_049-16.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_056_061-13.png",
+      "file_name": "train_good_056_061-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_057_075-13.png",
+      "file_name": "train_good_057_075-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_058_074-13.png",
+      "file_name": "train_good_058_074-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_059_060-13.png",
+      "file_name": "train_good_059_060-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_060_048-16.png",
+      "file_name": "train_good_060_048-16.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_061_100-13.png",
+      "file_name": "train_good_061_100-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_062_114-13.png",
+      "file_name": "train_good_062_114-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_063_128-13.png",
+      "file_name": "train_good_063_128-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_064_102-13.png",
+      "file_name": "train_good_064_102-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_065_116-13.png",
+      "file_name": "train_good_065_116-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_066_076-13.png",
+      "file_name": "train_good_066_076-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_067_062-13.png",
+      "file_name": "train_good_067_062-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_068_089-13.png",
+      "file_name": "train_good_068_089-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_069_088-13.png",
+      "file_name": "train_good_069_088-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_070_063-13.png",
+      "file_name": "train_good_070_063-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_071_077-13.png",
+      "file_name": "train_good_071_077-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_072_117-13.png",
+      "file_name": "train_good_072_117-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_073_103-13.png",
+      "file_name": "train_good_073_103-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_074_107-13.png",
+      "file_name": "train_good_074_107-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_075_113-13.png",
+      "file_name": "train_good_075_113-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_076_073-13.png",
+      "file_name": "train_good_076_073-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_077_067-13.png",
+      "file_name": "train_good_077_067-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_078_098-13.png",
+      "file_name": "train_good_078_098-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_079_099-13.png",
+      "file_name": "train_good_079_099-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_080_066-13.png",
+      "file_name": "train_good_080_066-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_081_072-13.png",
+      "file_name": "train_good_081_072-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_082_112-13.png",
+      "file_name": "train_good_082_112-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_083_106-13.png",
+      "file_name": "train_good_083_106-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_084_110-13.png",
+      "file_name": "train_good_084_110-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_085_104-13.png",
+      "file_name": "train_good_085_104-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_086_138-13.png",
+      "file_name": "train_good_086_138-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_087_064-13.png",
+      "file_name": "train_good_087_064-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_088_070-13.png",
+      "file_name": "train_good_088_070-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_089_058-15.png",
+      "file_name": "train_good_089_058-15.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_090_059-15.png",
+      "file_name": "train_good_090_059-15.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_091_071-13.png",
+      "file_name": "train_good_091_071-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_092_065-13.png",
+      "file_name": "train_good_092_065-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_093_139-13.png",
+      "file_name": "train_good_093_139-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_094_105-13.png",
+      "file_name": "train_good_094_105-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_095_111-13.png",
+      "file_name": "train_good_095_111-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_096_108-13.png",
+      "file_name": "train_good_096_108-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_097_134-13.png",
+      "file_name": "train_good_097_134-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_098_120-13.png",
+      "file_name": "train_good_098_120-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_099_068-13.png",
+      "file_name": "train_good_099_068-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_100_040-17.png",
+      "file_name": "train_good_100_040-17.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_101_054-16.png",
+      "file_name": "train_good_101_054-16.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_102_083-13.png",
+      "file_name": "train_good_102_083-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_103_097-13.png",
+      "file_name": "train_good_103_097-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_104_096-13.png",
+      "file_name": "train_good_104_096-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_105_082-13.png",
+      "file_name": "train_good_105_082-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_106_055-16.png",
+      "file_name": "train_good_106_055-16.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_107_041-16.png",
+      "file_name": "train_good_107_041-16.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_108_069-13.png",
+      "file_name": "train_good_108_069-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_109_121-13.png",
+      "file_name": "train_good_109_121-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_110_135-13.png",
+      "file_name": "train_good_110_135-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_111_109-13.png",
+      "file_name": "train_good_111_109-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_112_123-13.png",
+      "file_name": "train_good_112_123-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_113_137-13.png",
+      "file_name": "train_good_113_137-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_114_057-16.png",
+      "file_name": "train_good_114_057-16.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_115_043-16.png",
+      "file_name": "train_good_115_043-16.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_116_094-13.png",
+      "file_name": "train_good_116_094-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_117_080-13.png",
+      "file_name": "train_good_117_080-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_118_081-13.png",
+      "file_name": "train_good_118_081-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_119_095-13.png",
+      "file_name": "train_good_119_095-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_120_042-16.png",
+      "file_name": "train_good_120_042-16.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_121_056-16.png",
+      "file_name": "train_good_121_056-16.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_122_136-13.png",
+      "file_name": "train_good_122_136-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_123_122-13.png",
+      "file_name": "train_good_123_122-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_124_126-13.png",
+      "file_name": "train_good_124_126-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_125_132-13.png",
+      "file_name": "train_good_125_132-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_126_052-16.png",
+      "file_name": "train_good_126_052-16.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_127_046-16.png",
+      "file_name": "train_good_127_046-16.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_128_091-13.png",
+      "file_name": "train_good_128_091-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_129_085-13.png",
+      "file_name": "train_good_129_085-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_130_084-13.png",
+      "file_name": "train_good_130_084-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_131_090-13.png",
+      "file_name": "train_good_131_090-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_132_047-16.png",
+      "file_name": "train_good_132_047-16.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_133_053-16.png",
+      "file_name": "train_good_133_053-16.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_134_133-13.png",
+      "file_name": "train_good_134_133-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_135_127-13.png",
+      "file_name": "train_good_135_127-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_136_131-13.png",
+      "file_name": "train_good_136_131-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_137_125-13.png",
+      "file_name": "train_good_137_125-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_138_119-13.png",
+      "file_name": "train_good_138_119-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_139_045-16.png",
+      "file_name": "train_good_139_045-16.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_140_051-16.png",
+      "file_name": "train_good_140_051-16.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_141_079-13.png",
+      "file_name": "train_good_141_079-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_142_086-13.png",
+      "file_name": "train_good_142_086-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_143_092-13.png",
+      "file_name": "train_good_143_092-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_144_093-13.png",
+      "file_name": "train_good_144_093-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_145_087-13.png",
+      "file_name": "train_good_145_087-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_146_078-13.png",
+      "file_name": "train_good_146_078-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_147_050-16.png",
+      "file_name": "train_good_147_050-16.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_148_044-16.png",
+      "file_name": "train_good_148_044-16.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_149_118-13.png",
+      "file_name": "train_good_149_118-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_150_124-13.png",
+      "file_name": "train_good_150_124-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_151_130-13.png",
+      "file_name": "train_good_151_130-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_152_157-13.png",
+      "file_name": "train_good_152_157-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_153_143-13.png",
+      "file_name": "train_good_153_143-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_154_194-13.png",
+      "file_name": "train_good_154_194-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_155_180-13.png",
+      "file_name": "train_good_155_180-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_156_023-31.png",
+      "file_name": "train_good_156_023-31.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_157_037-18.png",
+      "file_name": "train_good_157_037-18.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_158_208-13.png",
+      "file_name": "train_good_158_208-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_159_036-18.png",
+      "file_name": "train_good_159_036-18.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_160_022-38.png",
+      "file_name": "train_good_160_022-38.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_161_181-13.png",
+      "file_name": "train_good_161_181-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_162_195-13.png",
+      "file_name": "train_good_162_195-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_163_142-13.png",
+      "file_name": "train_good_163_142-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_164_156-13.png",
+      "file_name": "train_good_164_156-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_165_168-13.png",
+      "file_name": "train_good_165_168-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_166_140-13.png",
+      "file_name": "train_good_166_140-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_167_154-13.png",
+      "file_name": "train_good_167_154-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_168_183-13.png",
+      "file_name": "train_good_168_183-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_169_197-13.png",
+      "file_name": "train_good_169_197-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_170_008-91.png",
+      "file_name": "train_good_170_008-91.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_171_034-18.png",
+      "file_name": "train_good_171_034-18.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_172_020-44.png",
+      "file_name": "train_good_172_020-44.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_173_021-41.png",
+      "file_name": "train_good_173_021-41.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_174_035-18.png",
+      "file_name": "train_good_174_035-18.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_175_009-90.png",
+      "file_name": "train_good_175_009-90.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_176_196-13.png",
+      "file_name": "train_good_176_196-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_177_182-13.png",
+      "file_name": "train_good_177_182-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_178_155-13.png",
+      "file_name": "train_good_178_155-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_179_141-13.png",
+      "file_name": "train_good_179_141-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_180_169-13.png",
+      "file_name": "train_good_180_169-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_181_145-13.png",
+      "file_name": "train_good_181_145-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_182_151-13.png",
+      "file_name": "train_good_182_151-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_183_179-13.png",
+      "file_name": "train_good_183_179-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_184_186-13.png",
+      "file_name": "train_good_184_186-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_185_192-13.png",
+      "file_name": "train_good_185_192-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_186_031-21.png",
+      "file_name": "train_good_186_031-21.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_187_025-25.png",
+      "file_name": "train_good_187_025-25.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_188_019-45.png",
+      "file_name": "train_good_188_019-45.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_189_018-53.png",
+      "file_name": "train_good_189_018-53.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_190_024-28.png",
+      "file_name": "train_good_190_024-28.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_191_030-21.png",
+      "file_name": "train_good_191_030-21.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_192_193-13.png",
+      "file_name": "train_good_192_193-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_193_187-13.png",
+      "file_name": "train_good_193_187-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_194_178-13.png",
+      "file_name": "train_good_194_178-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_195_150-13.png",
+      "file_name": "train_good_195_150-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_196_144-13.png",
+      "file_name": "train_good_196_144-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_197_152-13.png",
+      "file_name": "train_good_197_152-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_198_146-13.png",
+      "file_name": "train_good_198_146-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_199_191-13.png",
+      "file_name": "train_good_199_191-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_200_185-13.png",
+      "file_name": "train_good_200_185-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_201_026-23.png",
+      "file_name": "train_good_201_026-23.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_202_032-19.png",
+      "file_name": "train_good_202_032-19.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_203_033-18.png",
+      "file_name": "train_good_203_033-18.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "val"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_204_027-23.png",
+      "file_name": "train_good_204_027-23.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_205_184-13.png",
+      "file_name": "train_good_205_184-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_206_190-13.png",
+      "file_name": "train_good_206_190-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "train"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_207_147-13.png",
+      "file_name": "train_good_207_147-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "test"
+    },
+    {
+      "image_path": "/app/data/datasets/bottle3/raw/nomal/train_good_208_153-13.png",
+      "file_name": "train_good_208_153-13.png",
+      "cluster_id": 0,
+      "label_name": "nomal",
+      "label_id": 0,
+      "is_defect": false,
+      "split": "val"
+    }
+  ]
+}

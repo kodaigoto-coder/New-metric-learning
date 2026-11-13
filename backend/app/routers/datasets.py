@@ -168,12 +168,17 @@ def _build_and_save_annotations_manifest(
     r_test = float(test_ratio) / total_r
 
     rng = np.random.default_rng(seed)
-    by_class: dict[str, list[int]] = {}
+    by_strata: dict[tuple[str, int], list[int]] = {}
     for idx, lbl in enumerate(resolved_labels):
-        by_class.setdefault(lbl, []).append(idx)
+        sub_id = (
+            int(raw_items[idx].get("normal_subcluster_id", 0))
+            if lbl == norm_cls
+            else 0
+        )
+        by_strata.setdefault((lbl, sub_id), []).append(idx)
 
     splits = ["train"] * len(raw_items)
-    for _lbl, indices in by_class.items():
+    for _stratum_key, indices in by_strata.items():
         arr = list(indices)
         rng.shuffle(arr)
         n_cls = len(arr)
@@ -211,6 +216,7 @@ def _build_and_save_annotations_manifest(
                 "image_path": str(item["image_path"]),
                 "file_name": str(item["file_name"]),
                 "cluster_id": int(item.get("cluster_id", 0 if not is_def else lbl_id)),
+                "normal_subcluster_id": int(item.get("normal_subcluster_id", 0)),
                 "label_name": lbl_name,
                 "label_id": int(lbl_id),
                 "is_defect": bool(is_def),
@@ -538,12 +544,14 @@ def save_annotations_from_subfolders(req: DirectSubfolderAnnotationRequest) -> d
         )
 
     cluster_id_by_path: dict[str, int] = {}
+    norm_sub_by_path: dict[str, int] = {}
     clustering_path = BackendConfig.manifests_dir(target_ds) / "clustering_result.json"
     if clustering_path.exists():
         try:
             c_data = json.loads(clustering_path.read_text(encoding="utf-8"))
             for it in c_data.get("items", []):
                 cluster_id_by_path[str(it["image_path"])] = int(it["cluster_id"])
+                norm_sub_by_path[str(it["image_path"])] = int(it.get("normal_subcluster_id", 0))
         except Exception:
             pass
 
@@ -557,6 +565,7 @@ def save_annotations_from_subfolders(req: DirectSubfolderAnnotationRequest) -> d
                 "image_path": str(p),
                 "file_name": p.name,
                 "cluster_id": cluster_id_by_path.get(str(p), 0 if cls_name == req.normal_class_name else 1),
+                "normal_subcluster_id": norm_sub_by_path.get(str(p), 0),
             }
         )
 
@@ -657,6 +666,7 @@ def rename_or_merge_subfolder_class(
                         "image_path": new_p,
                         "file_name": Path(new_p).name,
                         "cluster_id": int(it.get("cluster_id", 0)),
+                        "normal_subcluster_id": int(it.get("normal_subcluster_id", 0)),
                     }
                 )
                 resolved_labels.append(lbl)
@@ -736,6 +746,21 @@ def direct_update_annotations(req: DirectAnnotationsEditorRequest) -> dict[str, 
     manifests_dir = BackendConfig.manifests_dir(target_ds)
     norm_cls = _sanitize_name(req.normal_class_name, fallback="normal")
 
+    prev_subcluster_by_key: dict[str, int] = {}
+    for prev_manifest_name in ("clustering_result.json", "annotations.json"):
+        prev_p = manifests_dir / prev_manifest_name
+        if prev_p.exists():
+            try:
+                prev_data = json.loads(prev_p.read_text(encoding="utf-8"))
+                for prev_it in prev_data.get("items", []):
+                    sc_val = int(prev_it.get("normal_subcluster_id", 0))
+                    if prev_it.get("image_path"):
+                        prev_subcluster_by_key[str(prev_it["image_path"])] = sc_val
+                    if prev_it.get("file_name"):
+                        prev_subcluster_by_key.setdefault(str(prev_it["file_name"]), sc_val)
+            except Exception:
+                pass
+
     updated_raw_items: list[dict[str, Any]] = []
     resolved_labels: list[str] = []
     explicit_splits: list[str] = []
@@ -745,6 +770,9 @@ def direct_update_annotations(req: DirectAnnotationsEditorRequest) -> dict[str, 
         clean_lbl = _sanitize_name(row.label_name, fallback=norm_cls)
         cur_p = Path(row.image_path)
         final_p = cur_p
+        prev_sc = prev_subcluster_by_key.get(
+            str(row.image_path), prev_subcluster_by_key.get(cur_p.name, 0)
+        )
 
         if req.sync_raw_subfolders and cur_p.exists():
             target_cls_dir = raw_dir / clean_lbl
@@ -762,6 +790,7 @@ def direct_update_annotations(req: DirectAnnotationsEditorRequest) -> dict[str, 
                 "image_path": str(final_p),
                 "file_name": final_p.name,
                 "cluster_id": 0 if clean_lbl == norm_cls else max(1, int(row.cluster_id)),
+                "normal_subcluster_id": max(0, int(prev_sc)) if clean_lbl == norm_cls else -1,
             }
         )
         resolved_labels.append(clean_lbl)

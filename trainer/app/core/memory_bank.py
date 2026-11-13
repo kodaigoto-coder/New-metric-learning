@@ -5,6 +5,7 @@ from __future__ import annotations
 import gc
 from typing import Literal
 
+import numpy as np
 import torch
 import torch.nn.functional as F
 
@@ -43,32 +44,39 @@ class CrossBatchMemoryBank:
 
     def update(
         self,
-        sample_indices: list[int] | torch.Tensor,
+        sample_indices: list[int] | np.ndarray | torch.Tensor,
         embeddings: torch.Tensor,
-        labels: list[int] | torch.Tensor,
-        is_defect_flags: list[bool] | torch.Tensor,
+        labels: list[int] | np.ndarray | torch.Tensor,
+        is_defect_flags: list[bool] | np.ndarray | torch.Tensor,
     ) -> None:
         """Store detached L2-normalized 128-D embeddings keyed by dataset sample index."""
-        detached = F.normalize(embeddings.detach().to(dtype=torch.float32, device="cpu"), p=2, dim=-1)
+        if embeddings.shape[0] == 0:
+            return
+        detached = F.normalize(
+            embeddings.detach().to(dtype=torch.float32, device="cpu"), p=2, dim=-1, eps=1e-6
+        )
         if detached.requires_grad:  # pragma: no cover
             raise RuntimeError("Memory bank embeddings must never retain autograd graphs.")
 
         idx_list = (
-            sample_indices.detach().cpu().tolist()
+            sample_indices.detach().cpu().reshape(-1).tolist()
             if isinstance(sample_indices, torch.Tensor)
-            else list(sample_indices)
+            else np.asarray(sample_indices, dtype=np.int64).reshape(-1).tolist()
         )
         lbl_list = (
-            labels.detach().cpu().tolist() if isinstance(labels, torch.Tensor) else list(labels)
+            labels.detach().cpu().reshape(-1).tolist()
+            if isinstance(labels, torch.Tensor)
+            else np.asarray(labels, dtype=np.int64).reshape(-1).tolist()
         )
         def_list = (
-            is_defect_flags.detach().cpu().tolist()
+            is_defect_flags.detach().cpu().to(dtype=torch.bool).reshape(-1).tolist()
             if isinstance(is_defect_flags, torch.Tensor)
-            else list(is_defect_flags)
+            else np.asarray(is_defect_flags, dtype=bool).reshape(-1).tolist()
         )
 
-        for i, sample_idx in enumerate(idx_list):
-            sid = int(sample_idx)
+        n_rows = min(detached.shape[0], len(idx_list), len(lbl_list), len(def_list))
+        for i in range(n_rows):
+            sid = int(idx_list[i])
             self._embeddings[sid] = detached[i].clone()
             self._labels[sid] = int(lbl_list[i])
             self._is_defect[sid] = bool(def_list[i])

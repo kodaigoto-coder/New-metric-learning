@@ -624,25 +624,43 @@ if st.button(
     type="primary",
     disabled=(total_imgs_now < 3),
 ):
-    job = client.trigger_clustering(
-        {
-            "dataset_name": active_dataset_name,
-            "backbone_name": backbone_name,
-            "pooling_type": pooling_type,
-            "normal_class_name": normal_class_for_cluster,
-            "core_quantile": 0.85,
-            "k_nn": 15,
-            "max_k": int(max_k),
-            "max_pca_dim": 64,
-            "pca_variance": 0.95,
-            "pretrained": bool(use_pretrained_cluster),
-        }
-    )
+    try:
+        job = client.trigger_clustering(
+            {
+                "dataset_name": active_dataset_name,
+                "backbone_name": backbone_name,
+                "pooling_type": pooling_type,
+                "normal_class_name": normal_class_for_cluster,
+                "core_quantile": 0.85,
+                "k_nn": 15,
+                "max_k": max(2, min(20, int(max_k))),
+                "max_pca_dim": 64,
+                "pca_variance": 0.95,
+                "pretrained": bool(use_pretrained_cluster),
+            }
+        )
+    except Exception as exc:
+        st.error(f"クラスタリングジョブの起動に失敗しました: {exc}")
+        st.stop()
     job_id = job["job_id"]
     prog_bar = st.progress(0.0, text="クラスタリングジョブ起動中...")
+    poll_err_cnt = 0
+    status: dict[str, Any] = {"status": "running"}
     while True:
-        status = client.get_job_status(job_id)
-        prog_bar.progress(float(status.get("progress", 0.0)), text=status.get("message", ""))
+        try:
+            status = client.get_job_status(job_id)
+            poll_err_cnt = 0
+        except Exception as exc:
+            poll_err_cnt += 1
+            if poll_err_cnt >= 6:
+                st.error(f"クラスタリング進捗の取得中に通信エラーが継続しました: {exc}")
+                st.stop()
+            time.sleep(0.8)
+            continue
+        prog_bar.progress(
+            min(1.0, max(0.0, float(status.get("progress", 0.0)))),
+            text=status.get("message", ""),
+        )
         if status["status"] in ("completed", "failed"):
             break
         time.sleep(0.5)

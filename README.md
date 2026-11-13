@@ -14,15 +14,15 @@
 ### 1.1. 目標（Goals）と非目標（Non-Goals）
 
 * **目標（Goals）**:
-  1. **良品クラス固定保持 ＋ 異常クラス限定サブクラスタリングと最小工数アノテーション**: 良品サブフォルダ（`normal` / `nomal` 等）を `Cluster 0` として100%固定保護し、異常サブフォルダ（`anomaly`）のみを良品基準残差標準化＋PCA＋シルエット自動選定K-meansで複数の不良モード（`anomaly_cluster_1 .. k*`）へ自動細分化する。さらにUI上から個別画像のラベル直接変更（良品 $\leftrightarrow$ 不良変更・クラス名変更）を可能にする。
+  1. **良品クラス固定保持・潜在サブモード診断 ＋ 異常クラス限定サブクラスタリングと最小工数アノテーション**: 良品サブフォルダ（`normal` / `nomal` 等）を `Cluster 0` として100%固定保護しつつ内部の潜在サブモード（キャビティ差・ロット差等：`normal_subcluster_id`）を自動診断し、異常サブフォルダ（`anomaly`）のみを良品サブモード基準の残差標準化（プール内標準偏差 $\sigma_{\text{within}}$）＋PCA＋シルエット自動選定K-meansで複数の不良モード（`anomaly_cluster_1 .. k*`）へ自動細分化する。さらにUI上から個別画像のラベル直接変更（良品 $\leftrightarrow$ 不良変更・クラス名変更）を可能にする。
   2. **データリークを完全排除した 6:2:2（Train 60% : Val 20% : Test 20%）層化分割と Val 駆動型エポック制御**:
-     * **Train（60%）**: モデルの重み更新・プロキシ更新・特徴量標準化統計量（`feat_mean`, `feat_std`）キャリブレーション・初期プロキシ K-Means 初期化・Effective-Number クラス重み $W_c$ 算出・境界合成バンク生成にのみ使用。
+     * **Train（60%）**: モデルの重み更新・プロキシ更新・**学習用良品のみ（不良サンプル0枚）によるサブクラスタ内特徴標準化（`feat_mean`, `feat_std`）キャリブレーション**・最適良品プロキシ数 $M^*$ の自動決定と Möbius 許容半径較正・初期プロキシ重心初期化・Effective-Number クラス重み $W_c$ 算出・希少不良の微小シフト特徴バンクおよび境界合成バンク生成にのみ使用。
      * **Val（20%）**: 各エポック終了時に評価し、次エポックの損失関数の方向性（実効求心力比率 `effective_normal_ratio` $r_{\text{eff}}(t+1)$ およびカリキュラム反発強度 $\gamma(t)$・マージン $m(t)$・Top-K抽出値 $K(t)$）の制御ならびに `best_model.pt` 選定にフィードバック。
      * **Test（20%）**: 学習・スケジューリングから完全隔離された最終ブラインド評価用ホールドアウトデータ。
-  3. **128次元単位超球面（$\mathbb{S}^{127}$）上での 50:50 Power-Balanced Multi-Proxy Anchor Loss 学習**:
-     * 従来のペアベース手法（標準 MS-Loss）や対称マルチクラス手法（標準 Proxy-Anchor / ArcFace）で発生していた「不良モード同士の不要な斥力による勾配分散」と「良品クラスタの分散肥大化」を解決するため、**①良品の求心力（基準50%: $\lambda_{\text{norm}}=1.0$）** と **②不良の斥力（基準50%: $\lambda_{\text{anom}}=1.0$）** を `[0.0, 1.0]` 対称コサインスケールで完全均衡させた [`CustomizedMultiProxyAnchorLoss`](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/trainer/app/core/proxy_anchor_loss.py#L14-L387) を主力損失として採用（比較検証用に [`AsymmetricMultiSimilarityLoss`](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/trainer/app/core/ms_loss.py#L12-L240) も選択可能）。
-  4. **NAB-Sampler（50:50非対称バッチ供給）と Phase 3 境界ハードサンプル合成**:
-     * 毎ミニバッチを「良品50% : 不良50%（全不良モード均等）」で構成し、不良データの早期枯渇をインメモリ層化復元抽出＋確率的摂動で回避する。さらに **Mask-Free Residual-Saliency Defect Transfer（残差サリエンシー欠陥転写）** と **片方向 Anomalous Mixup** により、良品境界すれすれの擬似微細欠陥（相対重み $0.25\times$）を生成して識別境界を強化する。
+  3. **非対称ワークの空間座標保持と 128次元単位超球面（$\mathbb{S}^{127}$）上での 50:50 Power-Balanced Multi-Proxy Anchor Loss 学習**:
+     * 「位置 $(x, y)$ で不良の意味が変わる非対称ワーク」に対応するため反転・回転拡張を完全禁止して `4x4` CNN 空間座標グリッド（`512D`）を保持し、さらに良品内の多峰性（キャビティ差等）に対しては許容被覆半径 $\epsilon$ とコサイン・シルエット係数から最適プロキシ数 $M^*$ を自動決定（単峰時は $M^*=1$ 維持、多峰時は $M^* \in \{2 \dots 6\}$ 分割＋Möbius 許容半径較正）する。その上で **①良品のサブクラスタ求心力（基準50%: $\lambda_{\text{norm}}=1.0$）** と **②実不良斥力＋正半球浅層合成ガード（基準50%: $\lambda_{\text{anom}}=1.0$）** を `[0.0, 1.0]` 対称スケールで完全均衡させた [`CustomizedMultiProxyAnchorLoss`](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/trainer/app/core/proxy_anchor_loss.py#L153-L694) を主力損失として採用（比較検証用に [`AsymmetricMultiSimilarityLoss`](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/trainer/app/core/ms_loss.py#L12-L240) も選択可能）。
+  4. **NAB-Sampler（50:50非対称・サブモード層化バッチ供給）と Phase 3 非対称ワーク対応・境界ハードサンプル合成**:
+     * 毎ミニバッチを「良品50%（$M^* \ge 2$ 時はサブモード均等層化） : 不良50%（全不良モード均等）」で構成し、不良データの早期枯渇をインメモリ層化復元抽出＋位置保持型の微小シフト・輝度摂動（$\pm 2\%$ 平行移動・$0.04$ 明度変動）で回避する。さらに異位相間の線形 Mixup を廃止し、**同一良品サブクラスタ内限定の同座標（$\pm 2\text{px}$）Zスコア残差サリエンシー欠陥転写** と **純粋異常残差 $\Delta_{\text{def}}$ 注入** により、良品多様体の内部を汚染せず外縁のみに擬似微細欠陥ガードレール（浅層マージン $\delta_{\text{synth}}$・重み $0.15\times$）を形成する。
   5. **マルチデータセット管理・学習セッション履歴（`session_XXXX`）・ツールチップ＆画像ポップアップ付き多軸空間評価**:
      * 複数データセットの独立保存・切り替え、過去の学習セッション（`session_0001`, `session_0002`, ...）のワンクリック呼び出し、**3D UMAP 立体散布図（学習済みプロキシ座標付き）**・**128次元生ベクトル活性化ヒートマップ**・混同行列における画像プレビューポップアップと指標解説ツールチップを提供する。
 * **非目標（Non-Goals）**:
@@ -33,20 +33,22 @@
 
 ```text
 【フェーズ1：前処理自動分類・アノテーション・6:2:2 層化分割（Page 1）】
-  [Step 1] 特徴量抽出 (timm バックボーン GAP/GeM/Avg_Max + 678次元 マルチスケール空間グリッド表面統計量)
+  [Step 1] 特徴量抽出 (timm 1x1 GeM/Avg_Max/GAP + 4x4 CNN空間座標グリッド[512D] + 678次元 表面統計量)
     ↓
-  [Step 2] 良品固定保持 (Cluster 0) ＋ 異常クラス限定 良品基準残差標準化・PCA・シルエット自動選定 K-means
+  [Step 2] 良品固定保持 (Cluster 0) ＆ 良品潜在サブモード検出 (normal_subcluster_id)
+           ＋ サブモード別残差標準化・PCA・シルエット自動選定 K-means による異常細分化 (Cluster 1..k*)
            （※単一未整理フォルダ投入時のみ2段階密度分離 Stage 1 / Stage 2 フォールバック）
     ↓
-  [Step 3] UI確認・個別ラベル直接修正 ＋ クラス別層化 6:2:2 (Train 60% / Val 20% / Test 20%) 分割確定
+  [Step 3] UI確認・個別ラベル直接修正 ＋ (クラス × 良品サブモード) 層化 6:2:2 (Train 60% / Val 20% / Test 20%) 分割確定
            (-> annotations.json 保存)
     ↓
 【フェーズ2：本番異常検知モデル学習（弱教師あり動的Metric-Learning）（Page 2）】
-  [Step 4] Train (60%) のみによる Z-Score キャリブレーション ＋ NAB-Sampler (良品50% : 不良50%)
-           ＋ Phase 3 境界ハードサンプル合成 (Defect Transfer + 片方向 Anomalous Mixup)
-           ＋ 128次元超球面 50:50 Power-Balanced Multi-Proxy Anchor Loss / 非対称 MS-Loss 学習
+  [Step 4] Train (60%) 良品のみによるサブクラスタ内 Z-Score 標準化 ＋ 最適良品プロキシ数 M* 自動決定 (0=Auto)
+           ＋ NAB-Sampler (良品50% [サブモード均等] : 不良50% [微小シフト3ビュー拡張])
+           ＋ Phase 3 非対称ワーク対応 境界合成 (同座標 Zスコア欠陥転写 + 同一サブクラスタ異常残差 Δ_def 注入)
+           ＋ 128次元超球面 50:50 Multi-Proxy Anchor Loss (サブクラスタ求心力 + 実不良斥力 & 浅層合成ガード + 北半球コーン直交化)
     ↓
-  [Step 5] Val (20%) データによるエポック評価 -> カリキュラム・スケジューラーへフィードバックし
+  [Step 5] エポック末の Möbius 許容半径較正 (α_m) ＆ Val (20%) データ評価 -> スケジューラーへフィードバックし
            次エポックの求心力比率 r_eff(t+1) と (γ(t), m(t), K(t)) を動的更新 ＋ XBM 境界良品反発
     ↓
   [Step 6] セッション別空間永続保存 (session_XXXX / 2階層 Pure NumPy .pkl) ＆ Test (20%) 多軸評価（Page 3）
@@ -61,17 +63,17 @@
 * **データセットの独立保存と切り替え**: `data/datasets/<dataset_name>/` 配下に各データセットの `raw/`, `manifests/`, `artifacts/`, `sessions/` を独立管理し、UIから即座にアクティブデータセットを切り替え・新規登録・削除できる。
 * **安全なサブフォルダ単位マージアップロード**: `normal`（または `nomal`, `ok`, `good`）と `anomaly`（または不良種別名）のサブフォルダを順番にアップロードしても既存フォルダが消えないよう、`clear_before_upload` のデフォルトを `False`（サブフォルダ単位のマージ保存）とし、1リクエストあたり最大40ファイル・20MB単位のチャンク分割送信でタイムアウトを防止する。
 
-### 2.2. 既製モデル特徴量抽出 ＋ 678次元マルチスケール表面統計量（Step 1）
-* **特徴量抽出 ([`MetricProjectionModel`](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/trainer/app/core/feature_extractor.py#L169-L320) & [`extract_handcrafted_surface_statistics`](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/trainer/app/core/feature_extractor.py#L101-L166))**:
-  * `timm` バックボーン（`efficientnet_b3`, `vit_base_patch16_224`, `resnet18`, `lightweight_cnn`）による深層特徴マップ抽出（プーリングは `gem` [$p=3.0$] / `avg_max` / `gap` から選択）に加え、ImageNet 事前学習特徴だけでは捉えにくい微細な輝度ムラ・局所コントラスト・エッジ勾配を補完するため、入力画像から **678次元のマルチスケール表面統計量ベクトル**（全体RGB平均[3]・標準偏差[3]、8×8パッチの95%/5%分位点[6]、4×4最大水平・垂直エッジ勾配[6]、8×8平均グリッド[192]、4×4最大/最小グリッド[96]、6×6局所標準偏差グリッド[108]、6×6水平・垂直エッジ勾配グリッド[216]、4×4色差グリッド[48]：計 $18 + 288 + 108 + 216 + 48 = 678$ 次元）を抽出し、それぞれ L2 正規化して連結する。
+### 2.2. 既製モデル特徴量抽出 ＋ `4x4` CNN 空間座標グリッド ＋ 678次元マルチスケール表面統計量（Step 1）
+* **特徴量抽出 ([`SpatialPoolingHead`](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/trainer/app/core/feature_extractor.py#L49-L114), [`MetricProjectionModel`](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/trainer/app/core/feature_extractor.py#L211-L417) & [`extract_handcrafted_surface_statistics`](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/trainer/app/core/feature_extractor.py#L143-L208))**:
+  * `timm` バックボーン（`efficientnet_b3`, `vit_base_patch16_224`, `resnet18`, `lightweight_cnn`）による `1x1` 大域深層特徴（`gem` [$p=3.0$] / `avg_max` / `gap`）に加え、非対称ワークにおける高次意味特徴の空間座標 $(x, y)$ を保持するための **`4x4 x 32 = 512` 次元 CNN 空間座標グリッド記述子**（重み `0.75` で L2 正規化結合）と、微細な輝度ムラ・局所コントラスト・エッジ勾配を補完する **678次元のマルチスケール表面統計量ベクトル**（全体RGB平均[3]・標準偏差[3]、8×8パッチの95%/5%分位点[6]、4×4最大水平・垂直エッジ勾配[6]、8×8平均グリッド[192]、4×4最大/最小グリッド[96]、6×6局所標準偏差グリッド[108]、6×6水平・垂直エッジ勾配グリッド[216]、4×4色差グリッド[48]：計 $18 + 288 + 108 + 216 + 48 = 678$ 次元）をブロック別に L2 正規化して連結する（例: `efficientnet_b3` + `gem` では $1536 + 512 + 678 = 2726$ 次元）。
 
-### 2.3. 良品クラスの固定保持 ＆ 異常クラスのみの自動細分化クラスタリング（Step 2, 3）
-* **良品固定 ＋ 異常クラス限定サブクラスタリング ([`run_two_stage_clustering`](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/trainer/app/core/two_stage_cluster.py#L97-L299))**:
-  1. **良品クラスの固定保持（`Cluster 0`）**: 良品サブフォルダ内の画像は一切クラスタリングせず、全件単一の「良品クラス（`Cluster 0`, `label_id = 0`）」として固定保持する。
-  2. **異常クラスのみの残差標準化＋PCA＋シルエット自動選定K-means（`Cluster 1 .. k*`）**: 異常サブフォルダ内の画像群のみを対象とし、良品基準分布（平均 $\mu_{\text{norm}}$・標準偏差 $\sigma_{\text{norm}}$、ゼロ分散保護 $\hat{\sigma}_{\text{norm}} = \text{where}(\sigma_{\text{norm}} > 10^{-5}, \sigma_{\text{norm}}, 1.0)$）で標準化・L2正規化して欠陥残差成分を抽出した上で、PCA（上限64次元・累積寄与率95%）およびコサイン距離シルエットスコア最大化 K-means を実行し、単一の `anomaly` フォルダを複数の不良モード（`anomaly_cluster_1 .. k*`）へ自動分割する。
+### 2.3. 良品クラスの固定保持・潜在サブモード診断 ＆ 異常クラスのみの自動細分化クラスタリング（Step 2, 3）
+* **良品固定・潜在サブモード診断 ＋ 異常クラス限定サブクラスタリング ([`run_two_stage_clustering`](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/trainer/app/core/two_stage_cluster.py#L124-L363))**:
+  1. **良品クラスの固定保持（`Cluster 0`）と潜在サブモード検出（`normal_subcluster_id`）**: 良品サブフォルダ内の画像は不良と混ぜてクラスタリングせず、全件単一の「良品クラス（`Cluster 0`, `label_id = 0`）」として固定保持する。同時に [`estimate_optimal_normal_proxies`](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/trainer/app/core/proxy_anchor_loss.py#L16-L121) により良品内の離散サブモード（キャビティ差等）の有無を診断し、`normal_subcluster_id`（単峰時は `0`、多峰時は `0 .. M*-1`）を記録する。
+  2. **異常クラスのみのサブモード基準残差標準化＋PCA＋シルエット自動選定K-means（`Cluster 1 .. k*`）**: 異常サブフォルダ内の画像群のみを対象とし、最近傍の良品サブモード重心 $\mu_{\text{norm}, m^*(i)}$ とプールされたサブモード内標準偏差 $\sigma_{\text{within}}$（ゼロ分散保護 $\hat{\sigma}_{\text{within}} = \text{where}(\sigma_{\text{within}} > 10^{-5}, \sigma_{\text{within}}, 1.0)$）で標準化・L2正規化して欠陥残差成分を抽出した上で、PCA（上限64次元・累積寄与率95%）およびコサイン距離シルエットスコア最大化 K-means を実行し、単一の `anomaly` フォルダを複数の不良モード（`anomaly_cluster_1 .. k*`）へ自動分割する。
 * **個別画像のラベル直接変更エディタ**: クラスタリング後またはサブフォルダ確定後でも、Page 1 の「個別画像のラベル直接変更・修正エディタ」（`POST /api/v1/annotations/direct-update`）から任意の画像のクラス名や良品/不良フラグ（`is_defect`）を1枚単位で書き換え可能。
-* **6:2:2（Train 60% : Val 20% : Test 20%）クラス別層化分割 ([`_build_and_save_annotations_manifest`](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/backend/app/routers/datasets.py#L144-L243))**:
-  * 確定した各クラス内でシード固定シャッフルを行い、以下の規則で `train` / `val` / `test` を割り当てる：
+* **6:2:2（Train 60% : Val 20% : Test 20%）クラス×良品サブモード層化分割 ([`_build_and_save_annotations_manifest`](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/backend/app/routers/datasets.py#L144-L249))**:
+  * 確定した各クラスおよび良品サブモード `(label_name, normal_subcluster_id)` 内でシード固定シャッフルを行い、以下の規則で `train` / `val` / `test` を割り当てる：
     * $n_{\text{cls}} \ge 3$: $n_{\text{val}} = \max(1, \text{round}(0.20 n_{\text{cls}}))$, $n_{\text{test}} = \max(1, \text{round}(0.20 n_{\text{cls}}))$（ただし $n_{\text{val}} + n_{\text{test}} \ge n_{\text{cls}}$ となる $n_{\text{cls}} \in \{3, 4\}$ では $n_{\text{val}} = 1, n_{\text{test}} = 1$ に補正し3分割すべてに最低1枚を保証）、$n_{\text{train}} = n_{\text{cls}} - n_{\text{val}} - n_{\text{test}}$
     * $n_{\text{cls}} = 2$: `train` = 1枚, `test` = 1枚（`val` = 0枚）
     * $n_{\text{cls}} = 1$: `train` = 1枚
@@ -80,38 +82,43 @@
 
 ## 3. 【フェーズ2】AIモデルの学習方法・損失関数・類似手法比較・ハイパーパラメーター解説
 
-### 3.1. ネットワーク構造と学習データ（Train 60%）基準 Z-Score キャリブレーション
-* **ネットワーク構造 ([`MetricProjectionModel`](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/trainer/app/core/feature_extractor.py#L169-L320))**:
-  * `timm` バックボーン（デフォルト `freeze_backbone=True`、または `unfreeze_last_block=True` で最終ステージのみ微調整）$\rightarrow$ Pooling（`GeM(p=3.0)` / `avg_max` / `gap`）＋ 678次元表面統計量結合 $\rightarrow$ **学習データ（`train` 60%）のみに基づく Z-Score 標準化バッファ**（[`calibrate_feature_stats`](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/trainer/app/core/feature_extractor.py#L270-L283)：`feat_mean`, `feat_std` で標準化後に `[-10, 10]` クリップ＆L2正規化）$\rightarrow$ MLP Projection Head（`Linear(D_gap, 384) -> BatchNorm1d(384) -> GELU -> Dropout(0.1) -> Linear(384, 128) -> L2Normalize`）$\rightarrow$ 単位超球面 $\mathbb{S}^{127}$ 上の128次元射影ベクトル $z \in \mathbb{R}^{128}$（$\|z\|_2 = 1$）。
+### 3.1. 非対称ワーク向け空間座標保持ネットワークと学習用良品限定サブクラスタ内 Z-Score 標準化
+* **位置保持型画像変換とネットワーク構造 ([`MetricProjectionModel`](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/trainer/app/core/feature_extractor.py#L211-L417))**:
+  * **非対称ワーク向け変換 ([`build_image_transforms` / `build_asymmetric_micro_augment_transforms`](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/trainer/app/core/feature_extractor.py#L420-L475))**: 空間座標 $(x, y)$ で欠陥の意味が変わる非対称ワークを前提とし、左右・上下反転（`RandomHorizontalFlip` 等）や回転変換は**完全禁止**。微小平行移動 `translate=(0.02, 0.02)` と微小輝度・コントラスト変動 `0.04` のみを適用する。
+  * **特徴射影パイプライン**: `timm` バックボーン（デフォルト `freeze_backbone=True`、または `unfreeze_last_block=True` で最終ステージのみ微調整）$\rightarrow$ `1x1` Pooling（`GeM(p=3.0)` / `avg_max` / `gap`）＋ `4x4` CNN 空間座標グリッド（`512D`）＋ 678次元表面統計量結合 $\rightarrow$ **`train` (60%) の良品データのみ（不良サンプル0枚）に基づくサブクラスタ内 Z-Score 標準化バッファ**（[`calibrate_feature_stats`](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/trainer/app/core/feature_extractor.py#L324-L380)：不良混入による欠陥発火チャネルの分散膨張と多峰良品のモード間分散膨張を排除し、サブモード均等平均 $\mu_{\text{bal}}$ とプール内標準偏差 $\sigma_{\text{within}}$ で標準化後に `[-10, 10]` クリップ＆L2正規化）$\rightarrow$ 入力特徴 `Dropout(0.20)` ＋ MLP Projection Head（`Linear(D_gap, 384) -> BatchNorm1d(384) -> GELU -> Dropout(0.10) -> Linear(384, 128) -> L2Normalize`）$\rightarrow$ 単位超球面 $\mathbb{S}^{127}$ 上の128次元射影ベクトル $z \in \mathbb{R}^{128}$（$\|z\|_2 = 1$）。
 
 ### 3.2. 主力損失関数：50:50 Power-Balanced Multi-Proxy Anchor Loss (`CustomizedMultiProxyAnchorLoss`)
 
-実装コード：[`trainer/app/core/proxy_anchor_loss.py`](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/trainer/app/core/proxy_anchor_loss.py#L14-L387)
+実装コード：[`trainer/app/core/proxy_anchor_loss.py`](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/trainer/app/core/proxy_anchor_loss.py#L153-L694)
 
-「サンプル vs サンプル」の総当たり計算を廃止し、単位超球面 $\mathbb{S}^{127}$ 上に学習可能なアンカーとして **$M$ 個の良品サブセンタープロキシ** $\hat{p}_{\text{norm}}^{(1)}, \dots, \hat{p}_{\text{norm}}^{(M)} \in \mathbb{S}^{127}$（`num_normal_proxies`）と **$C$ 個の不良モードプロキシ** $\hat{p}_{\text{def}}^{(1)}, \dots, \hat{p}_{\text{def}}^{(C)} \in \mathbb{S}^{127}$ を配置する。任意のサンプル $x$ の良品プロキシ群との最大コサイン類似度を $S(x, p_{\text{norm}}) = \max_{m \in \{1,\dots,M\}} \langle z(x), \hat{p}_{\text{norm}}^{(m)} \rangle \in [-1, 1]$ とするとき、パワーバランス比率 $r_{\text{norm}} \in [0.05, 0.95]$（`normal_loss_ratio`、デフォルト `0.50`）により重み係数を
+「サンプル vs サンプル」の総当たり計算を廃止し、単位超球面 $\mathbb{S}^{127}$ 上に学習可能なアンカーとして **$M$ 個の良品サブセンタープロキシ** $\hat{p}_{\text{norm}}^{(1)}, \dots, \hat{p}_{\text{norm}}^{(M)} \in \mathbb{S}^{127}$（`num_normal_proxies`、デフォルト `0` ＝ [`estimate_optimal_normal_proxies`](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/trainer/app/core/proxy_anchor_loss.py#L16-L121) により単峰なら $M^*=1$、離散多峰なら許容半径 $\epsilon = 0.22$・シルエット $\ge 0.25$・分散低減率 $\ge 18\%$ を満たす最小の $M^* \in \{2 \dots 6\}$ を自動決定）と **$C$ 個の不良モードプロキシ** $\hat{p}_{\text{def}}^{(1)}, \dots, \hat{p}_{\text{def}}^{(C)} \in \mathbb{S}^{127}$ を配置する。
+
+さらに $M > 1$ 時のサブクラスタ間の分散異方性を揃えるため、各プロキシの90%分位コサイン半径 $r_m$ と平均半径 $\bar{r}$ から **Möbius 距離較正関数**（[`calibrate_proxy_radii`](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/trainer/app/core/proxy_anchor_loss.py#L355-L450)：$M=1$ 時は $\alpha_1=1.0$ となり通常のコサイン類似度に厳密一致）
+$$\alpha_m = \text{clip}\left(\frac{\bar{r}(2 - r_m)}{r_m(2 - \bar{r})}, \; 0.40, \; 4.00\right), \quad \tilde{d}_m(z) = \frac{2 \alpha_m (1 - \langle z, \hat{p}_{\text{norm}}^{(m)} \rangle)}{(\alpha_m - 1)(1 - \langle z, \hat{p}_{\text{norm}}^{(m)} \rangle) + 2}, \quad S_{\text{cal}}(x, p_{\text{norm}}) = 1.0 - \min_{m \in \{1,\dots,M\}} \tilde{d}_m\big(z(x)\big)$$
+を構成する。パワーバランス比率 $r_{\text{norm}} \in [0.05, 0.95]$（`normal_loss_ratio`、デフォルト `0.50`）により重み係数を
 $$\lambda_{\text{norm}} = 2.0 \cdot r_{\text{norm}}, \qquad \lambda_{\text{anom}} = 2.0 \cdot (1.0 - r_{\text{norm}})$$
 と定め、全体の損失関数 $L_{\text{total}}$ を次式で定義する（$r_{\text{norm}} = 0.50$ のとき $\lambda_{\text{norm}} = 1.0, \lambda_{\text{anom}} = 1.0$ の **50 : 50 対称スケール**）：
 
 $$L_{\text{total}} = \underbrace{\lambda_{\text{norm}} \cdot L_{\text{centripetal}}}_{\text{① 良品の求心力（基準 50\%: }\lambda_{\text{norm}}=1.0\text{）}} + \underbrace{\lambda_{\text{anom}} \cdot L_{\text{repel}}}_{\text{② 不良の斥力（基準 50\%: }\lambda_{\text{anom}}=1.0\text{）}} + \underbrace{L_{\text{aux}}}_{\text{③ 補助正則化項}}$$
 
-1. **① 良品の求心力項（`loss_centripetal`：不感帯のない線形コサイン凝集）**:
-   $$L_{\text{primary\_centripetal}} = \frac{1}{|\mathcal{B}_{\text{norm}}|} \sum_{x \in \mathcal{B}_{\text{norm}}} \Big( 1.0 - S(x, p_{\text{norm}}) \Big)$$
-   $$L_{\text{centripetal}} = \begin{cases} L_{\text{primary\_centripetal}} & (M = 1) \\ 0.90 \cdot L_{\text{primary\_centripetal}} + 0.10 \cdot \frac{1}{M} \sum_{m=1}^{M} \left( 1.0 - \max_{x \in \mathcal{B}_{\text{norm}}} \langle z(x), \hat{p}_{\text{norm}}^{(m)} \rangle \right) & (M > 1) \end{cases}$$
-   * $\frac{\partial (1 - S)}{\partial S} = -1.0$ により、類似度 $S$ が高くなっても減衰しない一定の求心勾配が全良品サンプルに均等に働き続け、かつ良品には不良プロキシからの遠心力を一切作用させないため、良品クラスタ内分散 $\sigma^2_{\text{norm}}$ が単調に収縮する。
+1. **① 良品の求心力項（`loss_centripetal`：サブクラスタ・ルーティング付き線形コサイン凝集）**:
+   $$L_{\text{centripetal}} = \begin{cases} \displaystyle\frac{1}{|\mathcal{B}_{\text{norm}}|} \sum_{x \in \mathcal{B}_{\text{norm}}} \Big( 1.0 - S_{\text{cal}}(x, p_{\text{norm}}) \Big) & (M = 1 \text{ またはサブクラスタ未指定時}) \\[8pt] \displaystyle\frac{1}{|\mathcal{M}_{\text{active}}|} \sum_{m \in \mathcal{M}_{\text{active}}} \frac{1}{|\mathcal{B}_{\text{norm}, m}|} \sum_{x \in \mathcal{B}_{\text{norm}, m}} \tilde{d}_m\big(z(x)\big) & (M > 1 \text{ サブクラスタ・ルーティング時}) \end{cases}$$
+   * 単峰時（$M=1$）は $\frac{\partial (1 - S)}{\partial S} = -1.0$ の減衰しない一定求心勾配で全良品を単一中心へ収縮させ、多峰時（$M>1$）は各良品サンプルを対応するサブプロキシ $\hat{p}_{\text{norm}}^{(m)}$ のみへ独立凝集させて異モード間の無理な引き合いを防ぐ（良品への不良プロキシからの遠心力も完全ゼロ）。
 
-2. **② 不良の斥力項（`loss_repel`：アンカー固定 `p_norm.detach()` と平均 $1.0$ 正規化2段ヒンジ斥力）**:
+2. **② 不良の斥力項（`loss_repel`：アンカー固定 `p_norm.detach()`・実不良と正半球浅層合成ガードの分離）**:
    * **良品プロキシのドリフト防止**: 不良斥力計算時は `p_norm_anchor = p_norm.detach()` により良品プロキシ側の勾配を遮断し、反作用で良品中心が引きずり出されるのを防ぐ：
-     $$S_{\text{detach}}(x, p_{\text{norm}}) = \max_{m \in \{1, \dots, M\}} \langle z(x), \text{stop\_grad}(\hat{p}_{\text{norm}}^{(m)}) \rangle$$
-   * **平均 $1.0$ 正規化重み $\tilde{w}(x_i)$**: 実不良集合 $\mathcal{B}_{\text{def}}$ には Effective-Number クラス不均衡重み $W_{y_i}$ と、良品プロキシに最も近い上位 $K_{\text{eff}}$ 件へのブースト係数 $\lambda_{\text{hard}}$（`hard_anomaly_boost`、デフォルト `3.0`）を掛け、Phase 3 合成境界サンプル集合 $\mathcal{B}_{\text{synth}}$ には相対重み $0.25$ を割り当てた上で、バッチ内平均が常に $1.0$ になるよう正規化する：
-     $$\tilde{w}(x_i) = \frac{w_{\text{raw}}(x_i)}{\frac{1}{N_{\text{neg}}} \sum_{j=1}^{N_{\text{neg}}} \text{stop\_grad}(w_{\text{raw}}(x_j)) + 10^{-8}} \qquad \left(\frac{1}{N_{\text{neg}}} \sum_{i=1}^{N_{\text{neg}}} \tilde{w}(x_i) = 1.0\right)$$
-   * **2段コサインマージン・ヒンジ斥力と XBM 境界反発ブレンド**: 目標マージン $\delta$（`repel_delta`、デフォルト `0.0`＝直交90度）と深部マージン $\delta_{\text{deep}} = \min(\delta - 0.25, -0.25)$ を組み合わせ、さらに XBM 内の境界良品上位 $K_{\text{xbm}}$ 件とのヒンジ損失 $L_{\text{xbm\_hinge}}$ を $15\%$ ブレンドする（XBM 空時は $L_{\text{repel}} = L_{\text{repel\_batch}}$）：
+     $$S_{\text{detach}}(x, p_{\text{norm}}) = S_{\text{cal}}\big(z(x), \text{stop\_grad}(p_{\text{norm}})\big)$$
+   * **実不良内部での平均 $1.0$ 正規化重み $\tilde{w}_{\text{real}}(x_i)$**: 実不良集合 $\mathcal{B}_{\text{def}}$（枚数 $N_{\text{real}}$）には Effective-Number クラス不均衡重み $W_{y_i}$ と、良品プロキシに最も近い上位 $K_{\text{eff}}$ 件へのブースト係数 $\lambda_{\text{hard}}$（`hard_anomaly_boost`、デフォルト `3.0`）を掛け、実不良母集団のみで平均が常に $1.0$ になるよう正規化する：
+     $$\tilde{w}_{\text{real}}(x_i) = \frac{w_{\text{raw}}(x_i)}{\frac{1}{N_{\text{real}}} \sum_{j=1}^{N_{\text{real}}} \text{stop\_grad}(w_{\text{raw}}(x_j)) + 10^{-8}} \qquad \left(\frac{1}{N_{\text{real}}} \sum_{i=1}^{N_{\text{real}}} \tilde{w}_{\text{real}}(x_i) = 1.0\right)$$
+   * **実不良2段ヒンジ斥力 ($L_{\text{repel\_real}}$) と合成境界サンプルの正半球浅層ガードレール斥力 ($L_{\text{repel\_synth}}$)**: 実不良には目標マージン $\delta$（`repel_delta`、デフォルト `0.0`＝直交90度）・深部マージン $\delta_{\text{deep}} = \min(\delta - 0.25, -0.25)$・XBM 境界反発 $L_{\text{xbm\_hinge}}$（15%ブレンド）を適用し、Phase 3 の合成境界サンプル集合 $\mathcal{B}_{\text{synth}}$ は正常背景を歪めないよう正半球浅層マージン $\delta_{\text{synth}} = \max(\delta + 0.05, +0.05)$・固定小重み $0.15\times$ で独立加算する：
      $$\ell_{\text{repel}}(x_i) = 0.85 \cdot \max\Big(0, \; S_{\text{detach}}(x_i, p_{\text{norm}}) - \delta\Big) + 0.15 \cdot \max\Big(0, \; S_{\text{detach}}(x_i, p_{\text{norm}}) - \delta_{\text{deep}}\Big)$$
-     $$L_{\text{repel\_batch}} = \frac{1}{N_{\text{neg}}} \sum_{i=1}^{N_{\text{neg}}} \tilde{w}(x_i) \cdot \ell_{\text{repel}}(x_i), \qquad L_{\text{repel}} = 0.85 \cdot L_{\text{repel\_batch}} + 0.15 \cdot L_{\text{xbm\_hinge}}$$
+     $$L_{\text{repel\_real}} = 0.85 \cdot \left(\frac{1}{N_{\text{real}}} \sum_{i=1}^{N_{\text{real}}} \tilde{w}_{\text{real}}(x_i) \cdot \ell_{\text{repel}}(x_i)\right) + 0.15 \cdot L_{\text{xbm\_hinge}}$$
+     $$L_{\text{repel}} = L_{\text{repel\_real}} + 0.15 \cdot \frac{1}{N_{\text{synth}}} \sum_{x \in \mathcal{B}_{\text{synth}}} \max\Big(0, \; S_{\text{detach}}(x, p_{\text{norm}}) - \delta_{\text{synth}}\Big)$$
    * **最重要設計上の特徴**: 斥力は「不良サンプルと良品プロキシ（および XBM 境界良品）」の間にのみ働き、**不良モードAと不良モードBのサンプル同士には一切の斥力（Negative Push）を発生させない**。
 
-3. **③ 補助正則化項（`loss_aux`：不良モード別凝集・負半球維持・プロキシ直交化）**:
+3. **③ 補助正則化項（`loss_aux`：不良モード別凝集・負半球維持・北半球共有コーン直交化）**:
    $$L_{\text{aux}} = 0.10 \cdot L_{\text{def\_sub}} + 0.10 \cdot L_{\text{def\_hemisphere}} + w_{\text{ortho}} \cdot L_{\text{ortho}}$$
-   * 実不良サンプルを対応する不良モードプロキシ $\hat{p}_{\text{def}}^{(c)}$ へ緩やかに引き寄せる $L_{\text{def\_sub}}$、不良プロキシを負の半球（$\le -0.20$）に保つ $L_{\text{def\_hemisphere}}$、および異なる不良プロキシ同士の類似度を `0.20` 以下・良品サブプロキシ同士を `0.85` 以下に保つ2乗ヒンジ直交正則化 $L_{\text{ortho}}$ で構成される。
+   * 実不良サンプルを対応する不良モードプロキシ $\hat{p}_{\text{def}}^{(c)}$ へ緩やかに引き寄せる $L_{\text{def\_sub}}$、不良プロキシを負の半球（$\le -0.20$）に保つ $L_{\text{def\_hemisphere}}$、および異なる不良プロキシ同士の類似度を `0.20` 以下に抑えつつ $M > 1$ 時の良品サブプロキシ同士の内積を **$[+0.20, +0.75]$ の北半球共有コーン内** に保つ両側2乗ヒンジ正則化 $L_{\text{ortho}}$ で構成される。
 
 4. **Val（20%）評価フィードバックによる次エポック Loss 方向性自動制御 ([`CurriculumPenaltyScheduler.step`](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/trainer/app/core/scheduler.py#L61-L112))**:
    * 各エポック終了時に `val` 分割で評価した $\text{Recall}_{\text{val}}, \text{Precision}_{\text{val}}, d_{\min}^{\text{boundary}}, \mathcal{L}_{\text{cent}}^{\text{val}}, \mathcal{L}_{\text{repel}}^{\text{val}}$ から、①カリキュラム進捗度 $p(t) \in [0, 1]$ による $\gamma(t), m(t), K(t)$ の線形更新と、②次エポックの実効求心力比率 $r_{\text{eff}}(t+1) = \text{clip}(r_{\text{base}} + \text{clip}(0.25(\mathcal{L}_{\text{cent}}^{\text{val}} - \mathcal{L}_{\text{repel}}^{\text{val}}) + 0.10(\text{Recall}_{\text{val}} - \text{Precision}_{\text{val}}), -0.15, +0.15), 0.10, 0.90)$ の動的補正を行う。
@@ -134,26 +141,26 @@ $$L_{\text{total}} = \underbrace{\lambda_{\text{norm}} \cdot L_{\text{centripeta
 | **良品クラスタの収縮力（分散抑制）** | 相対マイニング閾値 $\epsilon$ や $\lambda_{\text{pos}}$ を超えるとペアが破棄され収縮が止まる | LogSumExp の指数重みにより最も遠い外れ値良品1枚に勾配の99%が集中し、さらに不良プロキシからの遠心力で良品が散乱する | 他クラスとの識別境界さえ超えればそれ以上中心へ1点凝集する力は弱まる | **全域一定勾配（$-1.0$）の線形コサイン距離 $1 - S(x, p_{\text{norm}})$** により全良品が単調収縮し、良品への遠心力もゼロ |
 | **プロキシ（良品中心）のドリフト耐性 & パワーバランス制御** | プロキシなし（バッチ内のペア数に依存し不均衡時に崩壊） | 不良からの反発勾配が良品プロキシに直接流入してドリフトし、求心力と斥力を独立制御不可 | 全クラス共通のスケール $s$ と角度マージン $m$ のみで非対称制御不可 | **`p_norm.detach()` で良品プロキシのドリフトを完全遮断** し、`[0, 1]` 対称スケール上で `normal_loss_ratio` ($r_{\text{norm}}$, デフォルト `0.50` = 50:50) を連続可変 |
 | **極少数不良（1枚のみのモード）耐性** | バッチ内に同クラスが1枚だと **Positive Pair $\mathcal{P}_i = \emptyset$ となり学習シグナルが完全消失** | 常駐プロキシによりバッチ内1枚でも計算可能 | 1〜2枚の不良サンプルに向かって重みベクトル $W_c$ が過学習しやすい | 常駐プロキシ ＋ `NAB-Sampler` 層化復元抽出 ＋ Effective-Number $W_c$ により **1枚の不良モードでも安定学習** |
-| **未知の不良モード（Open-Set 異常）への汎化** | 距離閾値判定が可能だが学習時のペア構成に依存 | 未知不良が既存不良プロキシと一致せず良品側に留まるリスク | **閉集合（Closed-Set）ボロノイ分割** のため、未知不良が最大面積の良品クラスへ誤分類されやすい | **「良品プロキシとの類似度 $S(x, p_{\text{norm}}) < \tau_{\text{sim}}$ はすべて異常」** という全方位包囲設計により Open-Set 異常に最適 |
+| **未知の不良モード（Open-Set 異常）への汎化** | 距離閾値判定が可能だが学習時のペア構成に依存 | 未知不良が既存不良プロキシと一致せず良品側に留まるリスク | **閉集合（Closed-Set）ボロノイ分割** のため、未知不良が最大面積の良品クラスへ誤分類されやすい | **「良品プロキシ群（自動決定 $M^*$ 本・Möbius 半径較正済み）との較正類似度 $S_{\text{cal}}(x, p_{\text{norm}}) < \tau_{\text{sim}}$ はすべて異常」** という全方位包囲設計により Open-Set 異常に最適 |
 
 ---
 
-### 3.5. NAB-Sampler（不均衡データ枯渇の回避機構）と Phase 3 境界ハードサンプル合成
-* **Normal-Anomaly Balanced Sampler ([`NormalAnomalyBalancedSampler`](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/trainer/app/core/nab_sampler.py#L41-L190))**:
+### 3.5. NAB-Sampler（不均衡データ枯渇の回避機構）と Phase 3 非対称ワーク対応・境界ハードサンプル合成
+* **Normal-Anomaly Balanced Sampler ([`NormalAnomalyBalancedSampler`](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/trainer/app/core/nab_sampler.py#L41-L241))**:
   * ミニバッチサイズ $B$（デフォルト `32`）のうち **`nab_normal_ratio`（デフォルト `0.50` ＝ 16枚）を良品スロット**、**残り `50%`（16枚）を異常スロット** として割り当てる。
-  * **不良データ早期枯渇の回避メカニズム**:
-    1. **良品スロットの2周巡回＋XBMハード良品優先注入**: 良品スロットの最大35%（最大5枚）に XBM が特定した境界ハード良品（`hard_normal_indices`）を優先注入し、残りを `norm_pool` の巡回ポインタ `norm_cursor` から順番に取り出す。1エポックのバッチ数を `max(min_steps, ceil(|norm_pool| / n_norm_slots) * 2)`（`min_steps` は [`train_jobs.py` L515](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/trainer/app/routers/train_jobs.py#L515) で `14`）とすることで、全良品データを1エポックあたり必ず2回以上網羅する。
-    2. **異常スロットのモード均等配分＋層化復元抽出**: 16枚の異常スロットを各不良サブクラス $c \in \{1, \dots, C\}$ に均等配分し、クラス内枚数がスロット数未満の希少不良モードでは自動的に `replace=True`（復元抽出）を適用する。抽出後には確率的データ拡張（水平反転・微小輝度摂動または特徴ガウシアン摂動 `randn * 0.015`）が加わるため、不良データの枯渇やポジティブペア欠損を起こすことなく多様な特徴ベクトルとしてプロキシ更新に寄与する。
-* **Phase 3 境界ハードサンプル合成 ([`boundary_augmentation.py`](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/trainer/app/core/boundary_augmentation.py#L32-L207))**:
-  * `enable_boundary_aug = True` 時、実バッチとは別に以下の2手法で **擬似境界ハード不良（`synth_embeddings`、第2項での相対重み $0.25\times$）** を生成し、良品クラスタ外縁の識別境界を強化する：
-    1. **Mask-Free Residual-Saliency Defect Transfer ([`synthesize_defect_transfer_images`](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/trainer/app/core/boundary_augmentation.py#L32-L103) / [`synthesize_boundary_gap_features`](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/trainer/app/core/boundary_augmentation.py#L147-L207))**: 不良画像と最近傍参照良品の平滑化残差マップ $R(u, v) = \text{AvgPool}_{11\times 11}(|I_{\text{bad}} - I_{\text{ref}}|)$ のピーク座標を特定し、2次元ガウシアンフェザリング窓（最大不透明度 `0.82`）で別の良品背景へ欠陥局所領域のみを転写する（特徴空間では異変上位 `30%` 次元を重み `0.85` でスプライス合成）。
-    2. **片方向 Anomalous Mixup ([`synthesize_anomalous_mixup_images`](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/trainer/app/core/boundary_augmentation.py#L107-L143) / [`synthesize_boundary_gap_features`](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/trainer/app/core/boundary_augmentation.py#L147-L207))**: 良品と不良を混合比率 $\alpha \sim \mathcal{U}(\alpha_{\min}, \alpha_{\max})$（デフォルト $\alpha \in [0.55, 0.75]$：良品55〜75%＋不良25〜45%）で補間・L2正規化し、良品プロキシ外縁すれすれのハードネガティブを生成する。
+  * **少数不良および少数良品モードの枯渇回避メカニズム**:
+    1. **良品スロットのサブモード均等層化巡回＋XBMハード良品優先注入**: 良品スロットの最大35%（最大5枚）に XBM が特定した境界ハード良品（`hard_normal_indices`）を優先注入し、残りは $M^* \ge 2$ 時は各良品サブクラスタ `normal_by_subcluster[sc_id]` から均等配分で巡回抽出し、$M^* = 1$ 時は `norm_pool` の巡回ポインタ `norm_cursor` から順番に取り出す。1エポックのバッチ数を `max(min_steps, ceil(|norm_pool| / n_norm_slots) * 2)`（`min_steps` は [`train_jobs.py` L638](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/trainer/app/routers/train_jobs.py#L638) で `14`）とすることで、全良品データおよび全良品サブモードを1エポックあたり必ず2回以上網羅する。
+    2. **異常スロットのモード均等配分＋位置保持型微小シフト拡張**: 16枚の異常スロットを各不良サブクラス $c \in \{1, \dots, C\}$ に均等配分し、クラス内枚数がスロット数未満の希少不良モードでは自動的に `replace=True`（復元抽出）を適用する。抽出後には**非対称ワークの位置意味を壊さない微小平行移動（$\pm 2\%$）＋微小輝度・コントラスト変動（$0.04$）の3ビュー特徴バンク**（[`defect_micro_aug_bank` (`train_jobs.py` L587-L594, L665-L670)](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/trainer/app/routers/train_jobs.py#L587-L594)：反転・回転は完全禁止）、特徴ガウシアン摂動 `randn * 0.012`、および入力特徴 `Dropout(0.20)` が加わるため、過学習やポジティブペア欠損を起こすことなくプロキシ更新に寄与する。
+* **Phase 3 非対称ワーク対応・境界ハードサンプル合成 ([`boundary_augmentation.py`](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/trainer/app/core/boundary_augmentation.py#L10-L311))**:
+  * 異位相・異キャビティ間の大域的線形 Mixup（良品サブクラスタ間の弦に偽の不良斥力源を置いて過検出 FP を誘発する原因）を完全廃止し、`enable_boundary_aug = True` 時は **「空間座標の保持」と「同一良品サブクラスタ内限定」** を守った以下の2手法で **擬似境界ハード不良（`synth_embeddings`、第2項の正半球浅層ガード $\delta_{\text{synth}} = \max(\delta + 0.05, +0.05)$・固定小重み $0.15\times$）** を生成する：
+    1. **同座標 Zスコア残差サリエンシー欠陥転写 ([`synthesize_defect_transfer_images`](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/trainer/app/core/boundary_augmentation.py#L80-L193))**: 不良画像 $I_{\text{bad}}$ と最近傍参照良品 $I_{\text{ref}}$ の残差を同一サブクラスタ良品のピクセル標準偏差 $\sigma_{\text{norm}}(u, v)$ で割った Zスコアマップ $Z(u, v) = \text{AvgPool}_{7\times 7}(|I_{\text{bad}} - I_{\text{ref}}| / (\sigma_{\text{norm}} + 0.03))$ で外形位置ズレを抑えて欠陥ピーク座標を特定し、**同一良品サブクラスタ内の別良品の同座標（$\pm 2\text{px}$ 微小シフトのみ）** へ局所ガウシアン窓（$\sigma_{\text{ratio}}$ デフォルト `0.10`, 最大不透明度 `0.88`）でハイブリッド転写する。
+    2. **同一サブクラスタ純粋異常残差抽出・注入 ([`synthesize_boundary_gap_features`](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/trainer/app/core/boundary_augmentation.py#L221-L311))**: 不良特徴から最近傍参照良品を引いた純粋異常残差 $\Delta_{\text{def}} = h_{\text{bad}} - h_{\text{ref}}$ を抽出し、**同一良品サブクラスタかつ局所コサイン近傍（$\cos \ge 0.45$）** のベース良品 $h_{\text{base}}$ に対して異変上位チャネルマスク（上位 `30%` / `45%`）＋チャネル Dropout（維持率 `80%` / `75%`）＋強度スケール $\beta$（$\alpha_{\min}, \alpha_{\max}$ 連動：デフォルト `[0.75, 1.25]` ＆ `[0.60, 1.10]`）で加算・L2正規化する。
 
 ---
 
 ### 3.6. ハイパーパラメーター一覧と意味・実装デフォルト値リファレンス
 
-[`ClusteringJobRequest` / `TrainingJobRequest`](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/trainer/app/schemas/job_models.py#L21-L80)、[`backend/app/schemas/api_models.py`](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/backend/app/schemas/api_models.py#L46-L135)、および Streamlit UI（[`2_training_monitor.py`](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/frontend/app/pages/2_training_monitor.py#L298-L445)）に実装されている全ハイパーパラメーターの定義・デフォルト値・意味は以下の通りである（詳細な調整指針は **[Model_Explanation.md 第8章](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/Model_Explanation.md#8-全ハイパーパラメータ完全リファレンスコード対応意味調整指針)** を参照）。
+[`ClusteringJobRequest` / `TrainingJobRequest`](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/trainer/app/schemas/job_models.py#L21-L84)、[`backend/app/schemas/api_models.py`](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/backend/app/schemas/api_models.py#L109-L198)、および Streamlit UI（[`2_training_monitor.py`](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/frontend/app/pages/2_training_monitor.py#L282-L449)）に実装されている全ハイパーパラメーターの定義・デフォルト値・意味は以下の通りである（詳細な調整指針は **[Model_Explanation.md 第8章](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/Model_Explanation.md#8-全ハイパーパラメータ完全リファレンスコード対応意味調整指針)** を参照）。
 
 #### (A) フェーズ1：前処理クラスタリング ＆ 6:2:2 データ分割パラメーター
 
@@ -161,15 +168,15 @@ $$L_{\text{total}} = \underbrace{\lambda_{\text{norm}} \cdot L_{\text{centripeta
 | :--- | :--- | :---: | :---: | :--- |
 | `dataset_name` | `str \| None` | `None` (現在選択中) | 登録済みデータセット名 | 対象データセット名（省略時はアクティブデータセットを使用）。 |
 | `backbone_name` | `str` | `"efficientnet_b3"` | `"efficientnet_b3"`, `"vit_base_patch16_224"`, `"resnet18"`, `"lightweight_cnn"` | 特徴抽出バックボーンモデル。 |
-| `pooling_type` | `str` | `"gem"` | `"gem"`, `"avg_max"`, `"gap"` | 空間プーリング方式。`"gem"`（Generalized Mean, $p=3.0$）は微小傷の局所活性化の希釈を防ぐ。 |
+| `pooling_type` | `str` | `"gem"` | `"gem"`, `"avg_max"`, `"gap"` | 大域空間プーリング方式（非対称ワーク向け `4x4` CNN 空間座標グリッド `512D` も自動併用）。`"gem"`（$p=3.0$）は微小傷の局所活性化の希釈を防ぐ。 |
 | `pretrained` | `bool` | `True` | `True` / `False` | `timm` 事前学習重みの使用フラグ。 |
-| `normal_class_name` | `str` | `"normal"` (自動検出) | 任意のサブフォルダ名 | `Cluster 0`（良品: `label_id=0`）としてクラスタリングせず100%固定保持する良品サブフォルダ名。 |
+| `normal_class_name` | `str` | `"normal"` (自動検出) | 任意のサブフォルダ名 | `Cluster 0`（良品: `label_id=0`）として不良と混ぜず100%固定保持する良品サブフォルダ名（潜在サブモード `normal_subcluster_id` のみ自動診断）。 |
 | `max_k` | `int` | `6` (UI) / `8` (API) | `2〜15` (UI) / `2〜20` (API) | 異常サブクラスタリング時の K-means 最大探索クラスタ数 $K_{\max}$。 |
 | `max_pca_dim` | `int` | `64` | `2` 〜 `256` (API) | 異常サブクラスタリング前段の PCA 最大次元数。 |
 | `pca_variance` | `float` | `0.95` | `0.50` 〜 `0.999` (API) | PCA の累積寄与率閾値（95%）。 |
 | `core_quantile` | `float` | `0.85` | `0.50〜0.95` (UI) / `0.50〜0.97` (API) | 単一未整理フォルダ投入時（`density_fallback`）に仮の良品コアとみなす密度上位割合。 |
 | `k_nn` | `int` | `15` | `2` 〜 `100` (API) | `density_fallback` 時の局所コサイン密度計算の近傍数。 |
-| `train_ratio` / `val_ratio` / `test_ratio` | `float` | `0.60` / `0.20` / `0.20` | `0.20〜0.80` / `0.05〜0.45` / `0.05〜0.45` | クラス別層化分割比率（**6 : 2 : 2**）。 |
+| `train_ratio` / `val_ratio` / `test_ratio` | `float` | `0.60` / `0.20` / `0.20` | `0.20〜0.80` / `0.05〜0.45` / `0.05〜0.45` | `(label_name, normal_subcluster_id)` 別層化分割比率（**6 : 2 : 2**）。 |
 
 #### (B) フェーズ2：50:50 Multi-Proxy Loss・NAB-Sampler・Phase 3 境界合成・XBM カリキュラムパラメーター
 
@@ -177,23 +184,23 @@ $$L_{\text{total}} = \underbrace{\lambda_{\text{norm}} \cdot L_{\text{centripeta
 | :--- | :--- | :---: | :---: | :--- |
 | `loss_type` | `str` | `"multi_proxy_anchor"` | `"multi_proxy_anchor"`, `"ms_loss"` | `"multi_proxy_anchor"`: 50:50 Power-Balanced Multi-Proxy Loss（推奨）、`"ms_loss"`: 非対称マルチクラス MS-Loss。 |
 | `normal_loss_ratio` ($r_{\text{norm}}$) | `float` | **`0.50`** | `0.10〜0.90` (UI)<br/>`0.05〜0.95` (API) | **①良品求心力 $\lambda_{\text{norm}} = 2 r_{\text{norm}}$ と ②不良斥力 $\lambda_{\text{anom}} = 2(1 - r_{\text{norm}})$ のパワーバランス比率**。`0.50` で 1.0 : 1.0（50:50）。良品分散をさらに絞る場合は `0.60〜0.70` へ上げる。 |
-| `repel_delta` ($\delta$) | `float` | **`0.00`** | `-0.50〜+0.50` (UI)<br/>`-0.80〜+0.80` (API) | 不良斥力項 $\max(0, S(x, p_{\text{norm}}) - \delta)$ の目標境界コサイン類似度。`0.00` は直交（90°）まで押し出す設定。 |
-| `num_normal_proxies` ($M$) | `int` | **`1`** (UI) / `4` (API) | `1` 〜 `12` | 良品クラスタを表現するサブセンタープロキシ数。単一品種では `1`（単一中心への凝集）、多品種・複数照明条件では `2〜4` を推奨。 |
-| `hard_anomaly_boost` ($\lambda_{\text{hard}}$) | `float` | **`3.0`** | `1.0` 〜 `20.0` | 良品プロキシに最も近い上位 $K_{\text{eff}}$ 件の危険実不良に掛ける相対優先度倍率（平均 $1.0$ に自動正規化されるため 50:50 バランスを崩さない）。 |
+| `repel_delta` ($\delta$) | `float` | **`0.00`** | `-0.50〜+0.50` (UI)<br/>`-0.80〜+0.80` (API) | 実不良斥力項 $\max(0, S_{\text{detach}}(x, p_{\text{norm}}) - \delta)$ の目標境界コサイン類似度（合成サンプルの浅層ガードは $\delta_{\text{synth}} = \max(\delta + 0.05, +0.05)$）。`0.00` は直交（90°）まで押し出す設定。 |
+| `num_normal_proxies` ($M$) | `int` | **`0`** (UI / API 共通) | `0` 〜 `12` | 良品サブセンタープロキシ数。**`0`（推奨デフォルト `Auto`）** で `train` 良品の許容半径 $\epsilon=0.22$ とシルエット係数から最適数 $M^*$ を自動決定（単峰なら $M^*=1$、多峰時は $M^* \in \{2 \dots 6\}$ 自動分割＋Möbius 半径較正）。`1〜12` で手動固定も可能。 |
+| `hard_anomaly_boost` ($\lambda_{\text{hard}}$) | `float` | **`3.0`** | `1.0` 〜 `20.0` | 良品プロキシに最も近い上位 $K_{\text{eff}}$ 件の危険実不良に掛ける相対優先度倍率（実不良内で平均 $1.0$ に自動正規化されるため 50:50 バランスを崩さない）。 |
 | `class_balance_beta` ($\beta$) | `float` | **`0.99`** | `0.80〜0.9999` (UI)<br/>`0.50〜0.9999` (API) | Effective-Number クラス不均衡重み $W_c \propto (1-\beta)/(1-\beta^{n_c})$ の減衰率。 |
 | `w_defect` | `float` | `1.0` (`2.5` in `ms_loss.py`) | `0.1〜10.0` (UI) / `>=0.1` (API) | `ms_loss` 選択時の Primary Negative 重み倍率および不良アンカー重み。 |
-| `w_aux` ($w_{\text{ortho}}$) | `float` | `0.20` (`0.5` in `ms_loss.py`) | `0.0〜2.0` (UI) / `>=0.0` (API) | `multi_proxy_anchor` ではプロキシ直交正則化項 $L_{\text{ortho}}$ の重み（[`train_jobs.py` L389](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/trainer/app/routers/train_jobs.py#L389) で下限 `0.1` 保護）、`ms_loss` では異種不良間重み。 |
+| `w_aux` ($w_{\text{ortho}}$) | `float` | `0.20` (`0.5` in `ms_loss.py`) | `0.0〜2.0` (UI) / `>=0.0` (API) | `multi_proxy_anchor` では不良プロキシ直交化＆良品サブプロキシ北半球コーン制約 $L_{\text{ortho}}$ の重み（[`train_jobs.py` L502](file:///Users/tmcqdtj1089/Desktop/New-metric-learning/trainer/app/routers/train_jobs.py#L502) で下限 `0.1` 保護）、`ms_loss` では異種不良間重み。 |
 | `freeze_backbone` / `unfreeze_last_block` | `bool` | `True` / `False` | `True` / `False` | バックボーン全体の凍結フラグ（デフォルト `True` で高速特徴キャッシュ学習）と、最終ブロックのみ Unfreeze するフラグ。 |
 | `epochs` | `int` | `20` (UI) / `10` (API) | `2〜100` (UI) / `1〜200` (API) | 総学習エポック数。 |
 | `batch_size` ($B$) | `int` | `32` | `8〜128` (UI) / `4〜256` (API) | ミニバッチサイズ。 |
 | `learning_rate` | `float` | `0.002` (`2e-3`) | `1e-5〜5e-2` (UI)<br/>`(0.0, 1.0]` (API) | `AdamW`（`weight_decay=1e-4`）の Projection Head 学習率（プロキシパラメータは `0.5 * lr`、勾配クリップ `max_norm=5.0`）。 |
-| `nab_normal_ratio` | `float` | **`0.50`** | `0.30〜0.70` (UI)<br/>`0.25〜0.75` (API) | `NormalAnomalyBalancedSampler` のミニバッチ内良品スロット比率（`0.50` ＝ 良品50% : 不良50%）。 |
-| `enable_boundary_aug` | `bool` | **`True`** | `True` / `False` | Phase 3 境界ハードサンプル合成（Defect Transfer ＋ 片方向 Anomalous Mixup）の有効化。 |
-| `mixup_alpha_min` / `mixup_alpha_max` | `float` | **`0.55`** / **`0.75`** | `0.30〜0.85` / `0.35〜0.90` (UI)<br/>`0.30〜0.90` / `0.35〜0.95` (API) | 片方向 Anomalous Mixup $h_{\text{mix}} = \alpha h_{\text{good}} + (1-\alpha) h_{\text{bad}}$ における良品混合率 $\alpha$ の下限・上限。 |
-| `top_k_mode` | `str` | `"ratio"` | `"ratio"`, `"count"` | Top-$K$ ハード不良および XBM 境界良品の抽出指定方式（`"ratio"`: 割合、`"count"`: 絶対件数）。 |
+| `nab_normal_ratio` | `float` | **`0.50`** | `0.30〜0.70` (UI)<br/>`0.25〜0.75` (API) | `NormalAnomalyBalancedSampler` のミニバッチ内良品スロット比率（`0.50` ＝ 良品50%［サブモード均等］ : 不良50%）。 |
+| `enable_boundary_aug` | `bool` | **`True`** | `True` / `False` | Phase 3 非対称ワーク対応・境界ハードサンプル合成（同座標 Zスコア欠陥転写 ＋ 同一サブクラスタ純粋異常残差 $\Delta_{\text{def}}$ 注入、浅層重み $0.15\times$）の有効化。 |
+| `mixup_alpha_min` / `mixup_alpha_max` | `float` | **`0.55`** / **`0.75`** | `0.30〜0.85` / `0.35〜0.90` (UI)<br/>`0.30〜0.90` / `0.35〜0.95` (API) | 境界合成の最小・最大強度係数（異常残差注入スケール $\beta_1 \in [\alpha_{\min}+0.20, \alpha_{\max}+0.50]$, $\beta_2 \in [\alpha_{\min}+0.05, \alpha_{\max}+0.35]$ および欠陥転写ガウシアン窓幅を制御）。 |
+| `top_k_mode` | `str` | `"ratio"` | `"ratio"`, `"count"` | Top-$K$ ハード実不良および XBM 境界良品の抽出指定方式（`"ratio"`: 割合、`"count"`: 絶対件数）。 |
 | `top_k_initial` / `top_k_final` | `float` | `0.30` / `0.15` (`ratio`)<br/>`30` / `20` (`count` UI) | `0.01〜500.0` (UI)<br/>`> 0.0` (API) | カリキュラム進捗度 $p(t)$ に連動する学習初期・後期の Top-$K$ 対象範囲（`scheduler.py` クラス初期値は `50.0 / 20.0`）。 |
 | `gamma_initial` / `gamma_final` | `float` | `0.6` / `1.5` (`0.3/1.5` in `scheduler.py`) | `0.1〜5.0` / `0.1〜10.0` (UI)<br/>`>= 0.0` (API) | カリキュラム進捗度 $p(t)$ に連動する境界反発係数 $\gamma(t)$ の初期値・最終値。 |
-| `tau_sim` ($\tau_{\text{sim}}$) | `float` | **`0.00`** | `-0.80〜+0.80` (UI)<br/>`-1.00〜+1.00` (API) | $S(x, p_{\text{norm}}) < \tau_{\text{sim}}$ を不良（NG）、$\ge \tau_{\text{sim}}$ を良品（OK）と判定するコサイン類似度閾値。 |
+| `tau_sim` ($\tau_{\text{sim}}$) | `float` | **`0.00`** | `-0.80〜+0.80` (UI)<br/>`-1.00〜+1.00` (API) | Möbius 較正後コサイン類似度 $S_{\text{cal}}(x, p_{\text{norm}}) < \tau_{\text{sim}}$ を不良（NG）、$\ge \tau_{\text{sim}}$ を良品（OK）と判定する閾値。 |
 | `full_snapshot_interval` | `int` | `4` | `>= 1` (API) | 高次元 `gap_features` を含む `epoch_XXXX_full.pkl` を定期保存するエポック周期。 |
 | `session_label` | `str \| None` | `None` | 任意の文字列 | 学習セッション履歴（`session_XXXX`）に付与する任意のラベル。 |
 
@@ -286,11 +293,11 @@ flowchart LR
 
 1. **マルチデータセット＆セッションディレクトリ構造**:
    * `data/datasets/<dataset_name>/raw/<subfolder>/`: アップロード・生成された生画像
-   * `data/datasets/<dataset_name>/manifests/clustering_result.json`: フェーズ1 クラスタリング結果
-   * `data/datasets/<dataset_name>/manifests/annotations.json`: 確定ラベル＋6:2:2分割マニフェスト（`split: "train" | "val" | "test"`）
+   * `data/datasets/<dataset_name>/manifests/clustering_result.json`: フェーズ1 クラスタリング結果（`detected_normal_subclusters` および各アイテムの `normal_subcluster_id` を含む）
+   * `data/datasets/<dataset_name>/manifests/annotations.json`: 確定ラベル＋`(label_name, normal_subcluster_id)` 層化 6:2:2 分割マニフェスト（`split: "train" | "val" | "test"`, `normal_subcluster_id: int`）
    * `data/datasets/<dataset_name>/sessions/session_XXXX/`: 学習実行ごとに自動採番されるセッションフォルダ（`session_meta.json`, `best_model.pt`, `epoch_{epoch:04d}_{light|full}.pkl`）
 2. **`epoch_{epoch:04d}_{light|full}.pkl`（Pure NumPy `ndarray` / Python 標準型）**:
-   * `epoch: int`, `is_full_snapshot: bool`, `image_paths: list[str]`, `labels: np.ndarray (int64[N])`, `label_names: list[str]`, `is_defect: np.ndarray (bool[N])`, `splits: list[str]` (`"train" | "val" | "test"`), `embeddings_128d: np.ndarray (float32[N, 128])`, `normal_prototype: np.ndarray (float32[128])`, `normal_proxies: np.ndarray (float32[M, 128]) | None`, `defect_proxies: np.ndarray (float32[C, 128]) | None`, `normal_proxies_umap_3d: np.ndarray (float32[M, 3]) | None`, `defect_proxies_umap_3d: np.ndarray (float32[C, 3]) | None`, `cosine_similarities: np.ndarray (float32[N])`, `umap_3d: np.ndarray (float32[N, 3])`, `d_min_centroid: float`, `d_min_boundary: float`, `test_d_min_centroid: float`, `test_d_min_boundary: float`, `normal_intra_disp: float`, `defect_intra_disp: float`, `fisher_separation_ratio: float`, `metrics_at_zero: dict`（Val 指標: `accuracy, recall, precision, f1, tp, fp, tn, fn`）, `test_metrics_at_zero: dict`（Test 指標）, `train_metrics_at_zero: dict`（Train 指標）, `all_metrics_at_zero: dict`（All 指標）
+   * `epoch: int`, `is_full_snapshot: bool`, `image_paths: list[str]`, `labels: np.ndarray (int64[N])`, `label_names: list[str]`, `is_defect: np.ndarray (bool[N])`, `splits: list[str]` (`"train" | "val" | "test"`), `embeddings_128d: np.ndarray (float32[N, 128])`, `normal_prototype: np.ndarray (float32[128])`, `normal_proxies: np.ndarray (float32[M, 128]) | None`, `defect_proxies: np.ndarray (float32[C, 128]) | None`, `normal_proxy_alphas: np.ndarray (float32[M]) | None`, `normal_proxy_radii: np.ndarray (float32[M]) | None`, `normal_proxies_umap_3d: np.ndarray (float32[M, 3]) | None`, `defect_proxies_umap_3d: np.ndarray (float32[C, 3]) | None`, `cosine_similarities: np.ndarray (float32[N])`（Möbius 較正後類似度 $S_{\text{cal}}$）, `umap_3d: np.ndarray (float32[N, 3])`, `d_min_centroid: float`, `d_min_boundary: float`, `test_d_min_centroid: float`, `test_d_min_boundary: float`, `normal_intra_disp: float`, `defect_intra_disp: float`, `fisher_separation_ratio: float`, `metrics_at_zero: dict`（Val 指標: `accuracy, recall, precision, f1, tp, fp, tn, fn`）, `test_metrics_at_zero: dict`（Test 指標）, `train_metrics_at_zero: dict`（Train 指標）, `all_metrics_at_zero: dict`（All 指標）
 
 ### 5.4. リポジトリ対象ファイル境界一覧（File Boundary）
 
@@ -322,7 +329,7 @@ New-metric-learning/
 │   │   ├── schemas/
 │   │   │   └── api_models.py                     # 全リクエスト/レスポンス Pydantic スキーマ
 │   │   └── routers/
-│   │       ├── datasets.py                       # マルチデータセット・クラスタ・アノテーション・6:2:2層化分割管理
+│   │       ├── datasets.py                       # マルチデータセット・クラスタ・(クラス×良品サブモード) 6:2:2層化分割管理
 │   │       ├── jobs_proxy.py                     # trainer-service ジョブ委譲・進捗取得プロキシ
 │   │       └── evaluation.py                     # セッション管理・.pkl読込・split別動的指標再計算
 │   └── tests/
@@ -339,17 +346,17 @@ New-metric-learning/
 │   │   │   └── train_jobs.py                     # 非同期ジョブ実行・6:2:2学習ループ・Valフィードバック・セッション保存
 │   │   └── core/
 │   │       ├── synthetic_data.py                 # 製造外観検査用合成画像ジェネレータ
-│   │       ├── feature_extractor.py              # timm (GAP/GeM/Avg_Max) + 678D表面統計 + Z-Score + 128D Projection Head
-│   │       ├── two_stage_cluster.py              # 良品固定 Cluster 0 + 異常残差PCA & シルエット自動選定K-means
-│   │       ├── proxy_anchor_loss.py              # 50:50 Power-Balanced Multi-Proxy Anchor Loss
+│   │       ├── feature_extractor.py              # 位置保持変換 + 1x1 GeM/GAP + 4x4空間グリッド + 678D統計 + 良品限定Z-Score + 128D射影
+│   │       ├── two_stage_cluster.py              # 良品固定 Cluster 0 & 潜在サブモード検出 + サブモード別残差PCA & シルエットK-means
+│   │       ├── proxy_anchor_loss.py              # 自動M*決定・Möbius半径較正付き 50:50 Power-Balanced Multi-Proxy Anchor Loss
 │   │       ├── ms_loss.py                        # 非対称マルチクラスMS-Loss + XBM双方向Top-K境界反発損失
-│   │       ├── nab_sampler.py                    # Normal-Anomaly Balanced Sampler (50:50 バッチ & 層化復元抽出)
-│   │       ├── boundary_augmentation.py          # Phase 3: Residual-Saliency Defect Transfer & One-Sided Mixup
+│   │       ├── nab_sampler.py                    # Normal-Anomaly Balanced Sampler (サブモード層化50:50バッチ & 復元抽出)
+│   │       ├── boundary_augmentation.py          # Phase 3: 同座標 Zスコア欠陥転写 & 同一サブクラスタ純粋異常残差 Δ_def 注入
 │   │       ├── memory_bank.py                    # Cross-Batch Memory Bank (detach格納・エポック毎明示解放)
 │   │       ├── scheduler.py                      # Val 駆動カリキュラム＆求心力比率フィードバック・スケジューラー
-│   │       └── evaluator.py                      # Train/Val/Test 分割別評価・3D UMAP・Pure NumPy .pkl保存
+│   │       └── evaluator.py                      # Train/Val/Test 分割別 Möbius較正評価・3D UMAP・Pure NumPy .pkl保存
 │   └── tests/
-│       └── test_trainer_core.py                  # クラスタリング・Proxy-Anchor・MS-Loss・XBM・6:2:2評価単体テスト
+│       └── test_trainer_core.py                  # 非対称ワーク座標識別・自動M*・Möbius較正・境界合成・6:2:2評価単体テスト
 ├── infra/
 │   └── terraform/                                # GCE VM、Persistent Disk、GAR、IAM Terraform 定義
 └── .github/

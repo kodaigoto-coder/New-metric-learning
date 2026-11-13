@@ -18,18 +18,23 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from fastapi import APIRouter, HTTPException
+from sklearn.cluster import KMeans
+from sklearn.decomposition import PCA
 
 from app.config import TrainerConfig
 from app.core.boundary_augmentation import (
-    synthesize_anomalous_mixup_images,
     synthesize_boundary_gap_features,
     synthesize_defect_transfer_images,
 )
-from app.core.evaluator import evaluate_and_persist_epoch_space
+from app.core.evaluator import (
+    compute_calibrated_normal_similarities_np,
+    evaluate_and_persist_epoch_space,
+)
 from app.core.feature_extractor import (
     MetricProjectionModel,
     build_image_transforms,
     extract_dataset_embeddings,
+    extract_micro_augmented_gap_bank,
     extract_raw_uncalibrated_features,
     load_image_tensor,
 )
@@ -39,7 +44,11 @@ from app.core.nab_sampler import (
     NormalAnomalyBalancedSampler,
     compute_class_balanced_weights,
 )
-from app.core.proxy_anchor_loss import CustomizedMultiProxyAnchorLoss
+from app.core.proxy_anchor_loss import (
+    CustomizedMultiProxyAnchorLoss,
+    assign_normal_subclusters_by_centroids,
+    estimate_optimal_normal_proxies,
+)
 from app.core.scheduler import CurriculumPenaltyScheduler
 from app.core.synthetic_data import generate_synthetic_inspection_dataset
 from app.core.two_stage_cluster import run_two_stage_clustering
@@ -89,6 +98,35 @@ def _persist_session_metadata(session_dir: Path, meta: dict[str, Any]) -> None:
     tmp_file = out_file.with_suffix(".json.tmp")
     tmp_file.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
     os.replace(tmp_file, out_file)
+
+
+def _atomic_copy_file(src: Path, dst: Path) -> None:
+    """Atomically copy `src` to `dst` via a sibling `.tmp` file so readers never see partial bytes."""
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    tmp_dst = dst.with_name(f".{dst.name}.{uuid.uuid4().hex[:8]}.tmp")
+    shutil.copy2(src, tmp_dst)
+    os.replace(tmp_dst, dst)
+
+
+def _resolve_trainer_image_path(raw_path: str, ds_name: str | None = None) -> Path | None:
+    """Resolve an image path across container (`/app/data/...`), host `DATA_DIR`, or renamed class folders."""
+    if not raw_path:
+        return None
+    p = Path(raw_path)
+    if p.exists() and p.is_file():
+        return p
+    if "/app/data/" in raw_path:
+        rel = raw_path.split("/app/data/", 1)[1]
+        cand = TrainerConfig.DATA_DIR / rel
+        if cand.exists() and cand.is_file():
+            return cand
+    search_ds = ds_name or TrainerConfig.get_active_dataset()
+    raw_root = TrainerConfig.raw_dir(search_ds)
+    if raw_root.exists():
+        matches = [m for m in raw_root.rglob(p.name) if m.is_file()]
+        if matches:
+            return matches[0]
+    return None
 
 
 def _execute_clustering_task(job_id: str, req: ClusteringJobRequest) -> None:
@@ -162,12 +200,14 @@ def _execute_clustering_task(job_id: str, req: ClusteringJobRequest) -> None:
             output_json_path=out_path,
         )
 
+        det_norm_m = int(cluster_res.get("detected_normal_subclusters", 1))
         _update_job(
             job_id,
             status="completed",
             progress=1.0,
             message=(
-                f"[{ds_name}] Clustering completed: Normal fixed ({cluster_res['normal_core_count']} imgs) + "
+                f"[{ds_name}] Clustering completed: Normal fixed ({cluster_res['normal_core_count']} imgs, "
+                f"M*={det_norm_m} latent sub-modes) + "
                 f"Anomaly split into {cluster_res['best_tail_k']} sub-clusters ({cluster_res['tail_count']} imgs)."
             ),
             result={
@@ -176,6 +216,7 @@ def _execute_clustering_task(job_id: str, req: ClusteringJobRequest) -> None:
                 "normal_class_name": cluster_res.get("normal_class_name", req.normal_class_name),
                 "total_samples": cluster_res["total_samples"],
                 "normal_core_count": cluster_res["normal_core_count"],
+                "detected_normal_subclusters": det_norm_m,
                 "tail_count": cluster_res["tail_count"],
                 "best_tail_k": cluster_res["best_tail_k"],
                 "total_clusters": cluster_res["total_clusters"],
@@ -201,42 +242,66 @@ def _extract_pixel_boundary_augmentation_bank(
     defect_indices: list[int],
     model: MetricProjectionModel,
     device: str,
-    alpha_min: float = 0.80,
-    alpha_max: float = 0.90,
+    normal_subclusters: np.ndarray | None = None,
+    alpha_min: float = 0.55,
+    alpha_max: float = 0.75,
 ) -> tuple[torch.Tensor | None, torch.Tensor | None]:
-    """Pre-generate a bank of pixel-level Defect Transfer + Anomalous Mixup standardized features."""
+    """Pre-generate a bank of position-preserving Z-score Saliency Defect Transfer standardized features."""
+    _ = is_defect
     if not normal_indices or not defect_indices:
         return None, None
+    sigma_r = float(np.clip(0.035 + 0.10 * (0.5 * float(alpha_min + alpha_max)), 0.07, 0.14))
 
     model.eval()
     base_tf = build_image_transforms(is_train=False, image_size=128)
     max_def = min(len(defect_indices), 48)
-    max_norm = min(len(normal_indices), 48)
+    max_norm = min(len(normal_indices), 64)
 
-    norm_tensors = [load_image_tensor(image_paths[i], base_tf) for i in normal_indices[:max_norm]]
+    # Stratify selected normal templates across normal sub-clusters so every normal mode has clean references
+    if normal_subclusters is not None and len(normal_subclusters) > max(normal_indices):
+        by_sub: dict[int, list[int]] = {}
+        for idx in normal_indices:
+            by_sub.setdefault(max(0, int(normal_subclusters[idx])), []).append(int(idx))
+        selected_norm: list[int] = []
+        sub_keys = sorted(by_sub.keys())
+        pos = 0
+        while len(selected_norm) < max_norm:
+            added = False
+            for sk in sub_keys:
+                if pos < len(by_sub[sk]) and len(selected_norm) < max_norm:
+                    selected_norm.append(by_sub[sk][pos])
+                    added = True
+            if not added:
+                break
+            pos += 1
+    else:
+        selected_norm = list(normal_indices[:max_norm])
+
+    norm_tensors = [load_image_tensor(image_paths[i], base_tf) for i in selected_norm]
     def_tensors = [load_image_tensor(image_paths[i], base_tf) for i in defect_indices[:max_def]]
     def_lbls = torch.tensor(
         [int(labels[i]) for i in defect_indices[:max_def]], dtype=torch.long, device=device
     )
+    norm_sub_slice: torch.Tensor | None = None
+    if normal_subclusters is not None and len(normal_subclusters) > max(selected_norm):
+        norm_sub_slice = torch.tensor(
+            [max(0, int(normal_subclusters[i])) for i in selected_norm],
+            dtype=torch.long,
+            device=device,
+        )
 
     x_norm = torch.stack(norm_tensors, dim=0).to(device)
     x_def = torch.stack(def_tensors, dim=0).to(device)
 
-    x_transfer, y_transfer = synthesize_defect_transfer_images(
+    x_synth_all, y_synth_all = synthesize_defect_transfer_images(
         normal_images=x_norm,
         defect_images=x_def,
         defect_labels=def_lbls,
+        num_synthetic=min(max_def * 2, 64),
+        sigma_ratio=sigma_r,
+        normal_subclusters=norm_sub_slice,
+        max_shift_px=2,
     )
-    x_mixup, y_mixup = synthesize_anomalous_mixup_images(
-        normal_images=x_norm,
-        defect_images=x_def,
-        defect_labels=def_lbls,
-        alpha_min=alpha_min,
-        alpha_max=alpha_max,
-    )
-
-    x_synth_all = torch.cat([x_transfer, x_mixup], dim=0)
-    y_synth_all = torch.cat([y_transfer, y_mixup], dim=0)
     if x_synth_all.shape[0] == 0:
         return None, None
 
@@ -305,18 +370,29 @@ def _execute_training_task(
             )
 
         ann_data = json.loads(ann_path.read_text(encoding="utf-8"))
-        items = ann_data.get("items", [])
+        raw_items = ann_data.get("items", [])
+        items: list[dict[str, Any]] = []
+        for raw_it in raw_items:
+            resolved_img = _resolve_trainer_image_path(str(raw_it.get("image_path", "")), ds_name)
+            if resolved_img is not None:
+                it_copy = dict(raw_it)
+                it_copy["image_path"] = str(resolved_img)
+                items.append(it_copy)
         if len(items) < 4:
-            raise ValueError("At least 4 annotated samples are required for Phase 2 training.")
+            raise ValueError(
+                f"At least 4 valid image files are required for Phase 2 training (found {len(items)})."
+            )
 
-        # Ensure 6:2:2 (train:val:test = 60%:20%:20%) stratified split if legacy 2-split manifest is loaded
+        # Ensure 6:2:2 (train:val:test = 60%:20%:20%) stratified split across defect modes AND normal sub-clusters
         if not any(str(it.get("split")) == "test" for it in items) and len(items) >= 6:
             rng_split = np.random.default_rng(42)
-            by_lbl: dict[str, list[int]] = {}
+            by_lbl: dict[tuple[str, int], list[int]] = {}
             for idx_i, it in enumerate(items):
-                by_lbl.setdefault(str(it.get("label_name", "normal")), []).append(idx_i)
+                l_nm = str(it.get("label_name", "normal"))
+                sc_i = 0 if bool(it.get("is_defect", False)) else max(0, int(it.get("normal_subcluster_id", 0)))
+                by_lbl.setdefault((l_nm, sc_i), []).append(idx_i)
             sp_counts: dict[str, int] = {"train": 0, "val": 0, "test": 0}
-            for _l_name, idxs in by_lbl.items():
+            for _stratum_key, idxs in by_lbl.items():
                 arr = list(idxs)
                 rng_split.shuffle(arr)
                 n_c = len(arr)
@@ -350,6 +426,14 @@ def _execute_training_task(
         labels = np.array([int(item["label_id"]) for item in items], dtype=np.int64)
         label_names = [str(item["label_name"]) for item in items]
         is_defect = np.array([bool(item["is_defect"]) for item in items], dtype=bool)
+        if not np.any(~is_defect):
+            raise ValueError(
+                "At least 1 Normal (`label_id=0`, `is_defect=False`) sample is required in annotations.json."
+            )
+        if not np.any(is_defect):
+            raise ValueError(
+                "At least 1 Defect (`is_defect=True`) sample is required in annotations.json for Phase 2 training."
+            )
         splits = [str(item.get("split", "train")) for item in items]
         train_mask_np = np.array([s == "train" for s in splits], dtype=bool)
         val_mask_np = np.array([s == "val" for s in splits], dtype=bool)
@@ -372,14 +456,100 @@ def _execute_training_task(
             unfreeze_last_block=req.unfreeze_last_block,
         ).to(device)
 
+        _update_job(
+            job_id,
+            progress=0.05,
+            message=(
+                f"[Session #{session_number:04d} | {ds_name}] Extracting raw features & calibrating "
+                "within-subcluster statistics strictly on train Normal samples..."
+            ),
+        )
+        raw_all = extract_raw_uncalibrated_features(
+            image_paths=image_paths,
+            model=model,
+            device=device,
+            batch_size=req.batch_size,
+        )
+
+        # Strict Normal-Only Calibration: exclude ALL defect samples so localized defect channels are never damped
+        train_norm_mask = train_mask_np & (~is_defect)
+        if int(np.sum(train_norm_mask)) < 2:
+            train_norm_mask = (
+                ~is_defect if int(np.sum(~is_defect)) >= 2 else np.ones(len(items), dtype=bool)
+            )
+        raw_train_norm = raw_all[train_norm_mask]
+
         use_proxy_anchor = req.loss_type == "multi_proxy_anchor"
+        if not use_proxy_anchor:
+            resolved_m = 1
+            train_norm_subclusters = np.zeros(len(raw_train_norm), dtype=np.int64)
+        elif int(req.num_normal_proxies) <= 0:
+            resolved_m, train_norm_subclusters = estimate_optimal_normal_proxies(
+                raw_train_norm,
+                max_proxies=6,
+                random_state=42,
+            )
+        else:
+            resolved_m = int(req.num_normal_proxies)
+            if (
+                resolved_m > 1
+                and len(raw_train_norm) >= resolved_m
+                and float(np.var(raw_train_norm)) >= 1e-12
+            ):
+                n_mu = np.mean(raw_train_norm, axis=0, keepdims=True)
+                z_n_centered = (raw_train_norm - n_mu).astype(np.float32)
+                n_comp = min(32, len(raw_train_norm) - 1, z_n_centered.shape[1])
+                z_n_proj = (
+                    np.nan_to_num(
+                        PCA(n_components=n_comp, random_state=42).fit_transform(z_n_centered),
+                        nan=0.0,
+                    )
+                    if n_comp >= 2
+                    else z_n_centered
+                )
+                z_n_sph = z_n_proj / (np.linalg.norm(z_n_proj, axis=1, keepdims=True) + 1e-8)
+                raw_km_lbls = KMeans(
+                    n_clusters=resolved_m, n_init=10, random_state=42
+                ).fit_predict(z_n_sph)
+                u_ids, u_cnts = np.unique(raw_km_lbls, return_counts=True)
+                order_ids = u_ids[np.argsort(-u_cnts, kind="mergesort")]
+                remap_ids = {int(old_i): new_i for new_i, old_i in enumerate(order_ids.tolist())}
+                train_norm_subclusters = np.array(
+                    [remap_ids[int(x)] for x in raw_km_lbls], dtype=np.int64
+                )
+            else:
+                resolved_m = (
+                    1
+                    if float(np.var(raw_train_norm)) < 1e-12
+                    else max(1, min(resolved_m, max(1, len(raw_train_norm))))
+                )
+                train_norm_subclusters = np.zeros(len(raw_train_norm), dtype=np.int64)
+
+        all_normal_subclusters = np.full(len(items), -1, dtype=np.int64)
+        if np.any(~is_defect):
+            if resolved_m > 1 and len(raw_train_norm) >= 2:
+                assigned_all_norm = assign_normal_subclusters_by_centroids(
+                    features=raw_all[~is_defect],
+                    ref_features=raw_train_norm,
+                    ref_subclusters=train_norm_subclusters,
+                )
+                all_normal_subclusters[~is_defect] = assigned_all_norm
+                all_normal_subclusters[train_norm_mask] = train_norm_subclusters
+            else:
+                all_normal_subclusters[~is_defect] = 0
+
+        model.calibrate_feature_stats(
+            raw_train_norm,
+            subcluster_labels=train_norm_subclusters if resolved_m > 1 else None,
+        )
+
         proxy_criterion: CustomizedMultiProxyAnchorLoss | None = None
         ms_criterion: AsymmetricMultiSimilarityLoss | None = None
 
         if use_proxy_anchor:
             proxy_criterion = CustomizedMultiProxyAnchorLoss(
                 embedding_dim=TrainerConfig.EMBEDDING_DIM,
-                num_normal_proxies=req.num_normal_proxies,
+                num_normal_proxies=resolved_m,
                 num_defect_classes=num_defect_classes,
                 class_balanced_weights=cb_weights,
                 normal_loss_ratio=req.normal_loss_ratio,
@@ -431,6 +601,7 @@ def _execute_training_task(
             batch_size=req.batch_size,
             normal_ratio=req.nab_normal_ratio,
             seed=42,
+            normal_subclusters=all_normal_subclusters,
         )
 
         train_transform = build_image_transforms(is_train=True, image_size=128)
@@ -439,20 +610,10 @@ def _execute_training_task(
         train_normal_indices = nab_sampler.normal_indices
         train_defect_indices = nab_sampler.defect_indices
 
-        _update_job(
-            job_id,
-            progress=0.05,
-            message=f"[Session #{session_number:04d} | {ds_name}] Extracting & calibrating baseline feature statistics strictly on train split...",
-        )
-        raw_all = extract_raw_uncalibrated_features(
-            image_paths=image_paths,
-            model=model,
-            device=device,
-            batch_size=req.batch_size,
-        )
-        # Strict data hygiene: calibrate feature mean/std and initialize proxies ONLY on `train` split (60%)
-        raw_train_only = raw_all[train_mask_np] if np.any(train_mask_np) else raw_all
-        model.calibrate_feature_stats(raw_train_only)
+        session_meta["resolved_num_normal_proxies"] = int(resolved_m if use_proxy_anchor else 1)
+        _persist_session_metadata(session_dir, session_meta)
+
+        model.eval()
         with torch.no_grad():
             cached_gap_tensor = model.standardize_features(
                 torch.from_numpy(raw_all).to(device=device, dtype=torch.float32)
@@ -460,28 +621,46 @@ def _execute_training_task(
             init_z = model.forward_from_gap_features(cached_gap_tensor)
             if proxy_criterion is not None:
                 if np.any(train_mask_np):
-                    train_idx_t = torch.tensor(np.where(train_mask_np)[0], dtype=torch.long, device=device)
+                    train_idx_t = torch.tensor(
+                        np.where(train_mask_np)[0], dtype=torch.long, device=device
+                    )
                     proxy_criterion.initialize_proxies_from_embeddings(
                         embeddings=init_z[train_idx_t],
                         labels=labels[train_mask_np],
+                        normal_subclusters=all_normal_subclusters[train_mask_np],
                     )
                 else:
                     proxy_criterion.initialize_proxies_from_embeddings(
                         embeddings=init_z,
                         labels=labels,
+                        normal_subclusters=all_normal_subclusters,
                     )
 
         cached_gap_np = cached_gap_tensor.detach().cpu().numpy().astype(np.float32)
         use_cached_backbone = bool(req.freeze_backbone and not req.unfreeze_last_block)
 
-        # Pre-generate pixel-level Defect Transfer + Anomalous Mixup standardized features if enabled
+        # Pre-extract position-preserving micro-shifted & brightness-jittered real defect views (NO flips/rotations)
+        defect_micro_aug_bank: dict[int, torch.Tensor] = {}
+        if use_cached_backbone and train_defect_indices:
+            defect_micro_aug_bank = extract_micro_augmented_gap_bank(
+                image_paths=image_paths,
+                sample_indices=train_defect_indices,
+                model=model,
+                device=device,
+                batch_size=req.batch_size,
+            )
+
+        # Pre-generate position-preserving Z-score Saliency Defect Transfer standardized features if enabled
         pixel_synth_gap: torch.Tensor | None = None
         pixel_synth_labels: torch.Tensor | None = None
         if req.enable_boundary_aug and use_cached_backbone and train_defect_indices:
             _update_job(
                 job_id,
                 progress=0.08,
-                message=f"[Session #{session_number:04d}] Synthesizing Phase 3 Residual-Saliency Defect Transfer & Anomalous Mixup boundary samples...",
+                message=(
+                    f"[Session #{session_number:04d}] Synthesizing Phase 3 same-coordinate Z-score "
+                    f"Defect Transfer boundary samples (M*={resolved_m})..."
+                ),
             )
             pixel_synth_gap, pixel_synth_labels = _extract_pixel_boundary_augmentation_bank(
                 image_paths=image_paths,
@@ -491,6 +670,7 @@ def _execute_training_task(
                 defect_indices=train_defect_indices,
                 model=model,
                 device=device,
+                normal_subclusters=all_normal_subclusters,
                 alpha_min=req.mixup_alpha_min,
                 alpha_max=req.mixup_alpha_max,
             )
@@ -502,7 +682,7 @@ def _execute_training_task(
 
         curr_state = scheduler.step(epoch=0, val_recall=0.0, d_min_boundary=0.0)
         history: list[dict[str, Any]] = []
-        best_score = -1.0
+        best_score = -float("inf")
         best_epoch_info: dict[str, Any] = {}
 
         for epoch in range(1, req.epochs + 1):
@@ -524,6 +704,11 @@ def _execute_training_task(
                 batch_y = torch.tensor(
                     [labels[idx] for idx in batch_indices], dtype=torch.long, device=device
                 )
+                batch_sub = torch.tensor(
+                    [int(all_normal_subclusters[idx]) for idx in batch_indices],
+                    dtype=torch.long,
+                    device=device,
+                )
                 batch_def = [bool(is_defect[idx]) for idx in batch_indices]
                 is_def_mask = batch_y > 0
 
@@ -533,8 +718,14 @@ def _execute_training_task(
 
                 if use_cached_backbone:
                     idx_t = torch.tensor(batch_indices, dtype=torch.long, device=device)
-                    batch_gap = cached_gap_tensor[idx_t]
-                    noise = torch.randn_like(batch_gap) * 0.015
+                    batch_gap = cached_gap_tensor[idx_t].clone()
+                    if defect_micro_aug_bank:
+                        for pos_i, s_idx in enumerate(batch_indices):
+                            if s_idx in defect_micro_aug_bank and float(rng.random()) < 0.75:
+                                views_t = defect_micro_aug_bank[s_idx]
+                                v_i = int(rng.integers(0, views_t.shape[0]))
+                                batch_gap[pos_i] = views_t[v_i]
+                    noise = torch.randn_like(batch_gap) * 0.012
                     batch_gap_aug = F.normalize(batch_gap + noise, p=2, dim=-1)
                     z_batch = model.forward_from_gap_features(batch_gap_aug)
 
@@ -548,6 +739,7 @@ def _execute_training_task(
                             defect_labels=batch_y[is_def_mask],
                             alpha_min=req.mixup_alpha_min,
                             alpha_max=req.mixup_alpha_max,
+                            normal_subclusters=batch_sub[~is_def_mask],
                         )
                         if f_gap.shape[0] > 0:
                             synth_gap_parts.append(f_gap)
@@ -576,22 +768,22 @@ def _execute_training_task(
                         x_norm_b = batch_x[~is_def_mask]
                         x_def_b = batch_x[is_def_mask]
                         y_def_b = batch_y[is_def_mask]
-                        x_tr, y_tr = synthesize_defect_transfer_images(
+                        sigma_r_live = float(
+                            np.clip(
+                                0.035 + 0.10 * (0.5 * float(req.mixup_alpha_min + req.mixup_alpha_max)),
+                                0.07,
+                                0.14,
+                            )
+                        )
+                        x_syn, y_synth = synthesize_defect_transfer_images(
                             normal_images=x_norm_b,
                             defect_images=x_def_b,
                             defect_labels=y_def_b,
-                            num_synthetic=max(2, x_def_b.shape[0] // 2),
+                            num_synthetic=max(2, x_def_b.shape[0]),
+                            sigma_ratio=sigma_r_live,
+                            normal_subclusters=batch_sub[~is_def_mask],
+                            max_shift_px=2,
                         )
-                        x_mx, y_mx = synthesize_anomalous_mixup_images(
-                            normal_images=x_norm_b,
-                            defect_images=x_def_b,
-                            defect_labels=y_def_b,
-                            alpha_min=req.mixup_alpha_min,
-                            alpha_max=req.mixup_alpha_max,
-                            num_synthetic=max(2, x_def_b.shape[0] // 2),
-                        )
-                        x_syn = torch.cat([x_tr, x_mx], dim=0)
-                        y_synth = torch.cat([y_tr, y_mx], dim=0)
                         if x_syn.shape[0] > 0:
                             z_synth, _ = model(x_syn)
 
@@ -607,6 +799,7 @@ def _execute_training_task(
                         top_k_mode=curr_state.top_k_mode,
                         top_k_value=curr_state.top_k_value,
                         normal_loss_ratio=curr_state.effective_normal_ratio,
+                        normal_subclusters=batch_sub,
                     )
                 else:
                     assert ms_criterion is not None
@@ -661,8 +854,23 @@ def _execute_training_task(
 
             norm_proxies_np: np.ndarray | None = None
             def_proxies_np: np.ndarray | None = None
+            norm_proxy_alphas_np: np.ndarray | None = None
+            norm_proxy_radii_np: np.ndarray | None = None
             if proxy_criterion is not None:
+                cal_mask = (
+                    train_mask_np
+                    if np.any(train_mask_np & (~is_defect))
+                    else np.ones(len(items), dtype=bool)
+                )
+                proxy_criterion.calibrate_proxy_radii(
+                    embeddings=z_all[cal_mask],
+                    labels=labels[cal_mask],
+                    normal_subclusters=all_normal_subclusters[cal_mask],
+                )
                 norm_proxies_np, def_proxies_np = proxy_criterion.get_proxies_numpy()
+                norm_proxy_alphas_np, norm_proxy_radii_np = (
+                    proxy_criterion.get_proxy_calibration_numpy()
+                )
 
             mean_loss = float(np.mean(epoch_losses)) if epoch_losses else 0.0
             mean_centripetal = (
@@ -690,6 +898,7 @@ def _execute_training_task(
                             top_k_mode=curr_state.top_k_mode,
                             top_k_value=curr_state.top_k_value,
                             normal_loss_ratio=curr_state.effective_normal_ratio,
+                            normal_subclusters=all_normal_subclusters[val_mask_np],
                         )
                         val_loss_val = float(val_l_stats.get("loss_total", 0.0))
                         val_loss_cent = float(val_l_stats.get("loss_centripetal", 0.0))
@@ -735,12 +944,20 @@ def _execute_training_task(
                 save_full_snapshot=is_milestone,
                 normal_proxies=norm_proxies_np,
                 defect_proxies=def_proxies_np,
+                normal_proxy_alphas=norm_proxy_alphas_np,
+                normal_proxy_radii=norm_proxy_radii_np,
             )
 
-            # Sync light/full pkl to root artifacts_dir for backward compatibility
-            shutil.copy2(eval_res["light_pkl_path"], root_art_dir / Path(eval_res["light_pkl_path"]).name)
+            # Sync light/full pkl to root artifacts_dir atomically for backward compatibility
+            _atomic_copy_file(
+                Path(eval_res["light_pkl_path"]),
+                root_art_dir / Path(eval_res["light_pkl_path"]).name,
+            )
             if eval_res["full_pkl_path"]:
-                shutil.copy2(eval_res["full_pkl_path"], root_art_dir / Path(eval_res["full_pkl_path"]).name)
+                _atomic_copy_file(
+                    Path(eval_res["full_pkl_path"]),
+                    root_art_dir / Path(eval_res["full_pkl_path"]).name,
+                )
 
             val_recall = float(eval_res["val_metrics"]["recall"])
             val_f1 = float(eval_res["val_metrics"]["f1"])
@@ -775,15 +992,29 @@ def _execute_training_task(
                     "backbone_name": req.backbone_name,
                     "pooling_type": req.pooling_type,
                     "embedding_dim": TrainerConfig.EMBEDDING_DIM,
+                    "enable_spatial_grid": bool(model.enable_spatial_grid),
+                    "input_dropout": float(model.input_dropout_rate),
+                    "resolved_num_normal_proxies": int(resolved_m if use_proxy_anchor else 1),
                     "state_dict": model.state_dict(),
                     "normal_prototype": eval_res["light_pkl_path"],
                     "normal_proxies": (
                         norm_proxies_np.tolist() if norm_proxies_np is not None else None
                     ),
+                    "defect_proxies": (
+                        def_proxies_np.tolist() if def_proxies_np is not None else None
+                    ),
+                    "normal_proxy_alphas": (
+                        norm_proxy_alphas_np.tolist() if norm_proxy_alphas_np is not None else None
+                    ),
+                    "normal_proxy_radii": (
+                        norm_proxy_radii_np.tolist() if norm_proxy_radii_np is not None else None
+                    ),
                 }
                 session_ckpt = session_dir / "best_model.pt"
-                torch.save(ckpt_payload, session_ckpt)
-                shutil.copy2(session_ckpt, root_art_dir / "best_model.pt")
+                tmp_ckpt = session_dir / f".best_model.{uuid.uuid4().hex[:8]}.pt.tmp"
+                torch.save(ckpt_payload, tmp_ckpt)
+                os.replace(tmp_ckpt, session_ckpt)
+                _atomic_copy_file(session_ckpt, root_art_dir / "best_model.pt")
                 best_epoch_info = {
                     "best_epoch": epoch,
                     "best_val_recall": val_recall,
@@ -799,6 +1030,7 @@ def _execute_training_task(
                 }
 
             # Validation feedback -> Next Epoch's Loss direction & curriculum schedule
+            has_val_def = bool(np.any(val_mask_np & is_defect))
             next_state = scheduler.step(
                 epoch=epoch,
                 val_recall=val_recall,
@@ -806,9 +1038,10 @@ def _execute_training_task(
                 val_loss_centripetal=val_loss_cent,
                 val_loss_repel=val_loss_rep,
                 val_precision=val_precision,
+                has_val_defects=has_val_def,
             )
 
-            # Update saved `.pkl` snapshots with post-validation next-epoch feedback
+            # Update saved `.pkl` snapshots atomically with post-validation next-epoch feedback
             for pkl_p_str in (eval_res["light_pkl_path"], eval_res["full_pkl_path"]):
                 if pkl_p_str:
                     pkl_p = Path(pkl_p_str)
@@ -817,9 +1050,11 @@ def _execute_training_task(
                             snap_obj = pickle.load(pf)
                         snap_obj["loss_direction_feedback"] = str(next_state.loss_direction_feedback)
                         snap_obj["effective_normal_ratio"] = round(float(next_state.effective_normal_ratio), 4)
-                        with open(pkl_p, "wb") as pf:
+                        tmp_pkl_p = pkl_p.with_name(f".{pkl_p.name}.{uuid.uuid4().hex[:8]}.tmp")
+                        with open(tmp_pkl_p, "wb") as pf:
                             pickle.dump(snap_obj, pf, protocol=pickle.HIGHEST_PROTOCOL)
-                        shutil.copy2(pkl_p, root_art_dir / pkl_p.name)
+                        os.replace(tmp_pkl_p, pkl_p)
+                        _atomic_copy_file(pkl_p, root_art_dir / pkl_p.name)
 
             epoch_record = {
                 "epoch": epoch,
@@ -857,7 +1092,7 @@ def _execute_training_task(
                 "repel_margin": float(req.repel_delta if use_proxy_anchor else curr_state.repel_margin),
                 "configured_top_k": curr_state.top_k_value,
                 "effective_top_k": last_k_eff,
-                "num_normal_proxies": int(req.num_normal_proxies if use_proxy_anchor else 1),
+                "num_normal_proxies": int(resolved_m if use_proxy_anchor else 1),
                 "xbm_released_entries": release_stats["released_entries"],
                 "xbm_remaining_entries": release_stats["remaining_entries"],
                 "light_pkl_path": eval_res["light_pkl_path"],
@@ -1036,10 +1271,6 @@ def get_job_status(job_id: str) -> JobStatusResponse:
 @torch.no_grad()
 def run_single_image_inference(req: SingleInferenceRequest) -> dict[str, Any]:
     """Run single-image anomaly detection inference using `best_model.pt` from `session_id` (or latest)."""
-    img_path = Path(req.image_path)
-    if not img_path.exists():
-        raise HTTPException(status_code=404, detail=f"Image not found at {img_path}.")
-
     TrainerConfig.ensure_legacy_session_migrated()
     target_dir = (
         TrainerConfig.session_dir(req.session_id)
@@ -1056,26 +1287,46 @@ def run_single_image_inference(req: SingleInferenceRequest) -> dict[str, Any]:
         )
 
     ckpt = torch.load(ckpt_path, map_location=TrainerConfig.DEVICE, weights_only=False)
+    resolved_img = _resolve_trainer_image_path(
+        req.image_path, str(ckpt.get("dataset_name") or "") or None
+    )
+    if resolved_img is None:
+        raise HTTPException(status_code=404, detail=f"Image not found at {req.image_path}.")
+    img_path = resolved_img
     model = MetricProjectionModel(
         backbone_name=ckpt.get("backbone_name", "efficientnet_b3"),
         pooling_type=ckpt.get("pooling_type", "gem"),
         embedding_dim=int(ckpt.get("embedding_dim", 128)),
         pretrained=False,
         freeze_backbone=True,
+        enable_spatial_grid=bool(ckpt.get("enable_spatial_grid", False)),
+        input_dropout=float(ckpt.get("input_dropout", 0.0)),
     ).to(TrainerConfig.DEVICE)
     model.load_state_dict(ckpt["state_dict"])
     model.eval()
 
-    light_pkl_files = sorted(target_dir.glob("epoch_*_light.pkl"))
-    if not light_pkl_files:
-        light_pkl_files = sorted(TrainerConfig.artifacts_dir().glob("epoch_*_light.pkl"))
-    if not light_pkl_files:
-        raise HTTPException(status_code=400, detail="No epoch snapshot `.pkl` found for prototype reference.")
+    normal_proxies = ckpt.get("normal_proxies")
+    normal_proxy_alphas = ckpt.get("normal_proxy_alphas")
+    normal_proto: np.ndarray | None = None
 
-    with open(light_pkl_files[-1], "rb") as f:
-        snap = pickle.load(f)
-    normal_proto = np.asarray(snap["normal_prototype"], dtype=np.float32)
-    normal_proxies = snap.get("normal_proxies")
+    if normal_proxies is None:
+        best_ep = int(ckpt.get("epoch", 0))
+        candidate_pkl = target_dir / f"epoch_{best_ep:04d}_light.pkl"
+        if not candidate_pkl.exists():
+            light_pkl_files = sorted(target_dir.glob("epoch_*_light.pkl"))
+            if not light_pkl_files:
+                light_pkl_files = sorted(TrainerConfig.artifacts_dir().glob("epoch_*_light.pkl"))
+            if not light_pkl_files:
+                raise HTTPException(
+                    status_code=400,
+                    detail="No epoch snapshot `.pkl` found for prototype reference.",
+                )
+            candidate_pkl = light_pkl_files[-1]
+        with open(candidate_pkl, "rb") as f:
+            snap = pickle.load(f)
+        normal_proto = np.asarray(snap["normal_prototype"], dtype=np.float32)
+        normal_proxies = snap.get("normal_proxies")
+        normal_proxy_alphas = snap.get("normal_proxy_alphas")
 
     transform = build_image_transforms(is_train=False, image_size=128)
     tensor = load_image_tensor(img_path, transform).unsqueeze(0).to(TrainerConfig.DEVICE)
@@ -1086,8 +1337,22 @@ def run_single_image_inference(req: SingleInferenceRequest) -> dict[str, Any]:
         norm_p_arr = np.asarray(normal_proxies, dtype=np.float32)
         if norm_p_arr.ndim == 1:
             norm_p_arr = norm_p_arr.reshape(1, -1)
-        cos_sim = float(np.max(norm_p_arr @ z_np))
+        p_norms = np.linalg.norm(norm_p_arr, axis=1, keepdims=True) + 1e-8
+        norm_p_arr = (norm_p_arr / p_norms).astype(np.float32)
+        alphas_arr = (
+            np.asarray(normal_proxy_alphas, dtype=np.float32)
+            if normal_proxy_alphas is not None
+            else None
+        )
+        cos_sim = float(
+            compute_calibrated_normal_similarities_np(
+                z_norm=z_np.reshape(1, -1),
+                norm_proxies=norm_p_arr,
+                proxy_alphas=alphas_arr,
+            )[0]
+        )
     else:
+        assert normal_proto is not None
         cos_sim = float(np.dot(z_np, normal_proto))
     cos_dist = float(1.0 - cos_sim)
     is_anomaly = cos_sim < float(req.tau_sim)

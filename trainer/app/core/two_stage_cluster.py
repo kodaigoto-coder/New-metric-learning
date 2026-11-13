@@ -12,6 +12,11 @@ from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 from sklearn.metrics import silhouette_score
 
+from app.core.proxy_anchor_loss import (
+    assign_normal_subclusters_by_centroids,
+    estimate_optimal_normal_proxies,
+)
+
 _NORMAL_CANDIDATE_NAMES = {"normal", "nomal", "good", "ok", "良品", "正常", "pass"}
 
 
@@ -31,7 +36,7 @@ def _resolve_sample_hints(
         if hint is None:
             parts = img_p.parts
             if "raw" in parts:
-                raw_idx = parts.index("raw")
+                raw_idx = len(parts) - 1 - parts[::-1].index("raw")
                 if raw_idx + 2 < len(parts):
                     hint = parts[raw_idx + 1]
         if hint is None:
@@ -105,12 +110,13 @@ def reduce_tail_pca(
     """Reduce anomaly features via PCA with upper dimension bound and 95% cumulative variance slicing."""
     n_tail, n_feat = tail_features.shape
     max_possible = min(max_components, n_tail - 1, n_feat)
-    if max_possible < 2:
-        return tail_features.astype(np.float32)
+    if max_possible < 2 or float(np.var(tail_features)) < 1e-12:
+        return np.nan_to_num(tail_features[:, : max(1, max_possible)], nan=0.0).astype(np.float32)
 
     pca = PCA(n_components=max_possible, random_state=random_state)
-    transformed = pca.fit_transform(tail_features)
-    cum_var = np.cumsum(pca.explained_variance_ratio_)
+    transformed = np.nan_to_num(pca.fit_transform(tail_features), nan=0.0)
+    evr = np.nan_to_num(pca.explained_variance_ratio_, nan=0.0)
+    cum_var = np.cumsum(evr)
     keep_dims = int(np.searchsorted(cum_var, variance_threshold) + 1)
     keep_dims = max(2, min(keep_dims, max_possible))
     return transformed[:, :keep_dims].astype(np.float32)
@@ -143,6 +149,9 @@ def run_two_stage_clustering(
        Only when no Normal/Anomaly folder hints exist at all, Stage 1 falls back to extracting
        the high-density core (`core_quantile`) as `Cluster 0` and clusters the low-density tail.
     """
+    features = np.nan_to_num(
+        np.asarray(features, dtype=np.float32), nan=0.0, posinf=0.0, neginf=0.0
+    )
     n_samples = features.shape[0]
     if n_samples != len(image_paths):
         raise ValueError("Length of features and image_paths must match.")
@@ -172,21 +181,52 @@ def run_two_stage_clustering(
             [i for i, h in enumerate(hints) if h != detected_normal_cls], dtype=np.int64
         )
 
-        # Standardize features relative to the Normal class reference distribution
+        # Detect latent Normal sub-clusters (M* >= 1) to standardize residuals per sub-cluster
         norm_ref = features[core_indices]
-        ref_mean = np.mean(norm_ref, axis=0, keepdims=True)
-        ref_std = np.std(norm_ref, axis=0, keepdims=True)
-        valid_std = np.where(ref_std > 1e-5, ref_std, 1.0)
-        standardized = np.clip((features - ref_mean) / (valid_std + 1e-5), -10.0, 10.0)
+        m_norm_sub, core_sub_ids = estimate_optimal_normal_proxies(
+            norm_ref, max_proxies=6, random_state=random_state
+        )
+        all_norm_sub_ids = assign_normal_subclusters_by_centroids(
+            features=features,
+            ref_features=norm_ref,
+            ref_subclusters=core_sub_ids,
+        )
+        all_norm_sub_ids[core_indices] = core_sub_ids
+
+        if m_norm_sub >= 2:
+            sub_means = np.zeros((m_norm_sub, features.shape[1]), dtype=np.float32)
+            sq_dev_sum = np.zeros((1, features.shape[1]), dtype=np.float32)
+            for sc_i in range(m_norm_sub):
+                sc_feats = norm_ref[core_sub_ids == sc_i]
+                if len(sc_feats) > 0:
+                    sc_mu = np.mean(sc_feats, axis=0)
+                    sub_means[sc_i] = sc_mu
+                    sq_dev_sum += np.sum((sc_feats - sc_mu) ** 2, axis=0, keepdims=True)
+                else:
+                    sub_means[sc_i] = np.mean(norm_ref, axis=0)
+            dof = max(1, len(norm_ref) - m_norm_sub)
+            ref_std = np.sqrt(np.maximum(sq_dev_sum / float(dof), 0.0))
+            valid_std = np.where(ref_std > 1e-5, ref_std, 1.0)
+            matched_means = sub_means[all_norm_sub_ids]
+            standardized = np.clip((features - matched_means) / (valid_std + 1e-5), -10.0, 10.0)
+
+            raw_norms = features / (np.linalg.norm(features, axis=1, keepdims=True) + 1e-8)
+            sub_unit = sub_means / (np.linalg.norm(sub_means, axis=1, keepdims=True) + 1e-8)
+            density_scores = np.max(raw_norms @ sub_unit.T, axis=1).astype(np.float32)
+        else:
+            ref_mean = np.mean(norm_ref, axis=0, keepdims=True)
+            ref_std = np.std(norm_ref, axis=0, keepdims=True)
+            valid_std = np.where(ref_std > 1e-5, ref_std, 1.0)
+            standardized = np.clip((features - ref_mean) / (valid_std + 1e-5), -10.0, 10.0)
+
+            raw_norms = features / (np.linalg.norm(features, axis=1, keepdims=True) + 1e-8)
+            normal_centroid = raw_norms[core_indices].mean(axis=0)
+            normal_centroid = normal_centroid / (np.linalg.norm(normal_centroid) + 1e-8)
+            density_scores = (raw_norms @ normal_centroid).astype(np.float32)
+
         normed_features = (
             standardized / (np.linalg.norm(standardized, axis=1, keepdims=True) + 1e-8)
         ).astype(np.float32)
-
-        # Compute similarity of every sample to the Normal core centroid for spot-checking display
-        raw_norms = features / (np.linalg.norm(features, axis=1, keepdims=True) + 1e-8)
-        normal_centroid = raw_norms[core_indices].mean(axis=0)
-        normal_centroid = normal_centroid / (np.linalg.norm(normal_centroid) + 1e-8)
-        density_scores = (raw_norms @ normal_centroid).astype(np.float32)
         clamped_quantile = round(float(len(core_indices) / n_samples), 4)
     else:
         # Fallback for 100% unlabeled single-folder datasets
@@ -200,6 +240,15 @@ def run_two_stage_clustering(
         sorted_indices = np.argsort(density_scores)[::-1]
         core_indices = sorted_indices[:n_core_est]
         tail_indices = sorted_indices[n_core_est:]
+        m_norm_sub, core_sub_ids = estimate_optimal_normal_proxies(
+            features[core_indices], max_proxies=6, random_state=random_state
+        )
+        all_norm_sub_ids = assign_normal_subclusters_by_centroids(
+            features=features,
+            ref_features=features[core_indices],
+            ref_subclusters=core_sub_ids,
+        )
+        all_norm_sub_ids[core_indices] = core_sub_ids
 
     n_core = len(core_indices)
     n_tail = len(tail_indices)
@@ -223,17 +272,22 @@ def run_two_stage_clustering(
         tail_pca_norm = tail_pca / (np.linalg.norm(tail_pca, axis=1, keepdims=True) + 1e-8)
 
         upper_k = min(max_k, n_tail - 1)
-        best_score = -2.0
+        best_score = 0.02
         best_labels = np.zeros(n_tail, dtype=np.int64)
 
         for k_cand in range(2, max(3, upper_k + 1)):
-            if k_cand >= n_tail:
+            if k_cand >= n_tail or float(np.var(tail_pca)) < 1e-12:
                 break
             km = KMeans(n_clusters=k_cand, n_init=10, random_state=random_state)
             cand_labels = km.fit_predict(tail_pca_norm)
-            if len(np.unique(cand_labels)) < 2:
+            if len(np.unique(cand_labels)) < k_cand:
                 continue
-            score = float(silhouette_score(tail_pca_norm, cand_labels, metric="cosine"))
+            try:
+                score = float(silhouette_score(tail_pca_norm, cand_labels, metric="cosine"))
+            except ValueError:
+                continue
+            if not np.isfinite(score):
+                continue
             silhouette_history[str(k_cand)] = round(score, 5)
             if score > best_score:
                 best_score = score
@@ -245,9 +299,15 @@ def run_two_stage_clustering(
         cluster_ids[tail_indices] = 1
 
     # Compute 2D PCA preview coordinates where Normal Core is centered and Anomaly sub-clusters fan out
-    if n_samples >= 2 and normed_features.shape[1] >= 2:
+    if (
+        n_samples >= 2
+        and normed_features.shape[1] >= 2
+        and float(np.var(normed_features)) >= 1e-12
+    ):
         preview_pca = PCA(n_components=2, random_state=random_state)
-        coords_2d = preview_pca.fit_transform(normed_features).astype(np.float32)
+        coords_2d = np.nan_to_num(
+            preview_pca.fit_transform(normed_features), nan=0.0
+        ).astype(np.float32)
     else:
         coords_2d = np.zeros((n_samples, 2), dtype=np.float32)
 
@@ -278,6 +338,7 @@ def run_two_stage_clustering(
                 "image_path": image_paths[i],
                 "file_name": img_p.name,
                 "cluster_id": cid,
+                "normal_subcluster_id": int(all_norm_sub_ids[i]),
                 "is_normal_core": bool(is_normal_core[i]),
                 "density_score": round(float(density_scores[i]), 5),
                 "preview_2d": [round(float(coords_2d[i, 0]), 4), round(float(coords_2d[i, 1]), 4)],
@@ -297,6 +358,7 @@ def run_two_stage_clustering(
         "normal_class_name": resolved_normal_name,
         "total_samples": int(n_samples),
         "normal_core_count": int(n_core),
+        "detected_normal_subclusters": int(m_norm_sub),
         "tail_count": int(n_tail),
         "core_quantile": float(clamped_quantile),
         "best_tail_k": int(best_tail_k),

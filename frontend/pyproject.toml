@@ -6,7 +6,6 @@ build-backend = "setuptools.build_meta"
 name = "metric-learning-frontend"
 version = "0.1.0"
 description = "Streamlit Frontend for Phase 1 Cluster Annotation, Phase 2 MS-Loss+XBM Training, and Step 6 3-Axis Space Evaluation"
-readme = "../README.md"
 requires-python = ">=3.10"
 dependencies = [
     "streamlit>=1.32.0",

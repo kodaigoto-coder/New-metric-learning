@@ -324,7 +324,7 @@ if not epochs_meta:
     st.info("保存済みのエポックスナップショット (`.pkl`) がありません。先に `2_training_monitor` で学習を実行してください。")
 else:
     epoch_numbers = [int(ep["epoch"]) for ep in epochs_meta]
-    best_ep_candidate = int(selected_session_meta.get("best_epoch", epoch_numbers[-1]))
+    best_ep_candidate = int(selected_session_meta.get("best_epoch") or epoch_numbers[-1])
     default_ep_val = best_ep_candidate if best_ep_candidate in epoch_numbers else epoch_numbers[-1]
 
     if "step6_selected_epoch" not in st.session_state or st.session_state["step6_selected_epoch"] not in epoch_numbers:
@@ -378,12 +378,17 @@ else:
         help="学習時のデフォルト閾値は 0.0（直交）です。スライダーを動かすと即座に Recall / F1 と混同行列が再計算されます。",
     )
 
-    eval_data = client.get_epoch_evaluation(
-        epoch=int(selected_epoch),
-        tau_sim=float(tau_sim),
-        session_id=selected_session_id,
-        split=selected_split,
-    )
+    tau_sim_clean = round(min(1.0, max(-1.0, float(tau_sim))), 4)
+    try:
+        eval_data = client.get_epoch_evaluation(
+            epoch=int(selected_epoch),
+            tau_sim=tau_sim_clean,
+            session_id=selected_session_id,
+            split=selected_split,
+        )
+    except Exception as exc:
+        st.error(f"Epoch {selected_epoch} の評価データ取得に失敗しました: {exc}")
+        st.stop()
     test_m = eval_data.get("test_metrics") or eval_data["val_metrics"]
     val_m = eval_data["val_metrics"]
     train_m = eval_data.get("train_metrics") or eval_data["all_metrics"]
@@ -981,9 +986,15 @@ else:
             if ev and hasattr(ev, "selection") and ev.selection and ev.selection.get("points"):
                 for pt in ev.selection["points"]:
                     cd = pt.get("customdata")
-                    if isinstance(cd, list) and len(cd) >= 1 and isinstance(cd[0], int):
-                        if cd[0] not in selected_indices:
-                            selected_indices.append(int(cd[0]))
+                    if (
+                        isinstance(cd, list)
+                        and len(cd) >= 1
+                        and isinstance(cd[0], (int, float))
+                        and not isinstance(cd[0], bool)
+                    ):
+                        idx_val = int(cd[0])
+                        if idx_val not in selected_indices:
+                            selected_indices.append(idx_val)
 
         if selected_indices:
             matched_umap_samples = [
@@ -1113,28 +1124,31 @@ else:
 
     st.divider()
     st.subheader("4. 単発画像推論テスト (`POST /api/v1/inference`)")
-    sample_paths = [s["image_path"] for s in samples_list]
+    sample_paths = [s["image_path"] for s in samples_list if s.get("image_path")]
     selected_img = st.selectbox("テスト対象画像を選択", options=sample_paths)
-    if st.button("選択した画像で単発推論を実行"):
-        inf_res = client.run_single_inference(
-            image_path=selected_img,
-            tau_sim=float(tau_sim),
-            session_id=selected_session_id,
-        )
-        inf_col1, inf_col2 = st.columns([1, 2])
-        with inf_col1:
-            rp = _resolve_image_file(selected_img)
-            if rp is not None:
-                with Image.open(rp) as im:
-                    st.image(im.copy(), caption=Path(selected_img).name, use_container_width=True)
-        with inf_col2:
-            st.json(
-                {
-                    "session_id": inf_res.get("session_id", selected_session_id),
-                    "image_path": inf_res["image_path"],
-                    "prediction": inf_res["prediction"],
-                    "cosine_similarity": inf_res["cosine_similarity"],
-                    "cosine_distance": inf_res["cosine_distance"],
-                    "tau_sim": inf_res["tau_sim"],
-                }
+    if st.button("選択した画像で単発推論を実行", disabled=not bool(selected_img)):
+        try:
+            inf_res = client.run_single_inference(
+                image_path=str(selected_img),
+                tau_sim=tau_sim_clean,
+                session_id=selected_session_id,
             )
+            inf_col1, inf_col2 = st.columns([1, 2])
+            with inf_col1:
+                rp = _resolve_image_file(str(selected_img))
+                if rp is not None:
+                    with Image.open(rp) as im:
+                        st.image(im.copy(), caption=Path(str(selected_img)).name, use_container_width=True)
+            with inf_col2:
+                st.json(
+                    {
+                        "session_id": inf_res.get("session_id", selected_session_id),
+                        "image_path": inf_res["image_path"],
+                        "prediction": inf_res["prediction"],
+                        "cosine_similarity": inf_res["cosine_similarity"],
+                        "cosine_distance": inf_res["cosine_distance"],
+                        "tau_sim": inf_res["tau_sim"],
+                    }
+                )
+        except Exception as exc:
+            st.error(f"単発画像推論に失敗しました: {exc}")

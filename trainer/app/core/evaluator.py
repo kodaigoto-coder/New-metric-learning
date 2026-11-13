@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import pickle
 from pathlib import Path
@@ -14,6 +15,51 @@ try:
     import umap
 except ImportError:  # pragma: no cover
     umap = None
+
+
+def _finite_float(val: float, default: float = 0.0) -> float:
+    f = float(val)
+    return f if math.isfinite(f) else float(default)
+
+
+def compute_calibrated_normal_similarities_np(
+    z_norm: np.ndarray,
+    norm_proxies: np.ndarray,
+    proxy_alphas: np.ndarray | None = None,
+) -> np.ndarray:
+    """Compute Möbius radius-calibrated normality similarity S_cal(z) = 1 - min_m d_tilde_m(z) in [-1, 1].
+
+    Reduces to exact max_m <z, p_norm^(m)> when M=1 or proxy_alphas is None / all ones.
+    """
+    z_clean = np.nan_to_num(np.asarray(z_norm, dtype=np.float32), nan=0.0, posinf=0.0, neginf=0.0)
+    if z_clean.shape[0] == 0:
+        return np.zeros((0,), dtype=np.float32)
+    p_clean = np.nan_to_num(
+        np.asarray(norm_proxies, dtype=np.float32), nan=0.0, posinf=0.0, neginf=0.0
+    )
+    if p_clean.ndim == 1:
+        p_clean = p_clean.reshape(1, -1)
+    if p_clean.shape[0] == 0:
+        return np.zeros((z_clean.shape[0],), dtype=np.float32)
+
+    raw_dists = np.clip(1.0 - (z_clean @ p_clean.T), 0.0, 2.0)  # [N, M]
+    if p_clean.shape[0] <= 1 or proxy_alphas is None:
+        return (1.0 - np.min(raw_dists, axis=1)).astype(np.float32)
+
+    alphas = np.nan_to_num(
+        np.asarray(proxy_alphas, dtype=np.float32).reshape(1, -1),
+        nan=1.0,
+        posinf=1.0,
+        neginf=1.0,
+    )
+    if alphas.shape[1] != p_clean.shape[0]:
+        return (1.0 - np.min(raw_dists, axis=1)).astype(np.float32)
+
+    alphas = np.clip(alphas, 0.40, 4.00)
+    numer = 2.0 * alphas * raw_dists
+    denom = (alphas - 1.0) * raw_dists + 2.0
+    d_tilde = np.clip(numer / (denom + 1e-8), 0.0, 2.0)
+    return (1.0 - np.min(d_tilde, axis=1)).astype(np.float32)
 
 
 def compute_binary_metrics_at_threshold(
@@ -124,9 +170,14 @@ def compute_space_dispersion_metrics(
         if not c_idx:
             continue
         c_vecs = z_norm[c_idx]
-        c_mean = np.mean(c_vecs, axis=0)
-        c_mean = c_mean / (np.linalg.norm(c_mean) + 1e-8)
-        c_cos_disp = float(np.mean(1.0 - (c_vecs @ c_mean)))
+        is_def_cls = bool(defect_mask[c_idx[0]])
+        if is_def_cls:
+            c_mean = np.mean(c_vecs, axis=0)
+            c_mean = c_mean / (np.linalg.norm(c_mean) + 1e-8)
+            c_cos_disp = float(np.mean(1.0 - (c_vecs @ c_mean)))
+        else:
+            # For Normal class, measure dispersion relative to assigned/calibrated normal proxies
+            c_cos_disp = float(np.mean(1.0 - sims[c_idx]))
         c_u = umap_arr[c_idx]
         c_u_center = np.mean(c_u, axis=0, keepdims=True)
         c_u_rad = float(np.sqrt(np.mean(np.sum((c_u - c_u_center) ** 2, axis=1))))
@@ -135,7 +186,7 @@ def compute_space_dispersion_metrics(
             {
                 "label_name": str(cls_name),
                 "count": int(len(c_idx)),
-                "is_defect": bool(defect_mask[c_idx[0]]),
+                "is_defect": is_def_cls,
                 "intra_cosine_disp": round(c_cos_disp, 5),
                 "mean_dist_from_normal": round(c_norm_dist, 5),
                 "umap_radius_3d": round(c_u_rad, 4),
@@ -161,13 +212,16 @@ def compute_3d_umap_coordinates(
     """Compute 3D UMAP coordinates directly from 128-D embeddings (no invalid 300-D PCA).
 
     Includes safe sample-count guards (`n_neighbors = min(15, max(2, N - 1))`) and falls back
-    cleanly to 3D PCA when sample count is too small for spectral UMAP initialization.
+    cleanly to 3D PCA when sample count is too small or spectral UMAP produces non-finite values.
     """
-    n_samples = embeddings_128d.shape[0]
+    clean_emb = np.nan_to_num(
+        np.asarray(embeddings_128d, dtype=np.float32), nan=0.0, posinf=0.0, neginf=0.0
+    )
+    n_samples = clean_emb.shape[0]
     if n_samples == 0:
         return np.zeros((0, 3), dtype=np.float32)
-    if n_samples < 5 or umap is None:
-        return _pca_3d_fallback(embeddings_128d)
+    if n_samples < 5 or umap is None or float(np.var(clean_emb)) < 1e-12:
+        return _pca_3d_fallback(clean_emb)
 
     n_neighbors = min(15, max(2, n_samples - 1))
     try:
@@ -179,19 +233,25 @@ def compute_3d_umap_coordinates(
             init="random" if n_samples < 12 else "spectral",
             random_state=random_state,
         )
-        coords = reducer.fit_transform(embeddings_128d)
-        return np.asarray(coords, dtype=np.float32)
+        coords = reducer.fit_transform(clean_emb)
+        coords_arr = np.asarray(coords, dtype=np.float32)
+        if coords_arr.shape != (n_samples, 3) or not np.all(np.isfinite(coords_arr)):
+            return _pca_3d_fallback(clean_emb)
+        return coords_arr
     except Exception:
-        return _pca_3d_fallback(embeddings_128d)
+        return _pca_3d_fallback(clean_emb)
 
 
 def _pca_3d_fallback(embeddings: np.ndarray) -> np.ndarray:
-    n_samples, n_features = embeddings.shape
+    clean_emb = np.nan_to_num(
+        np.asarray(embeddings, dtype=np.float32), nan=0.0, posinf=0.0, neginf=0.0
+    )
+    n_samples, n_features = clean_emb.shape
     k = min(3, n_samples, n_features)
     out = np.zeros((n_samples, 3), dtype=np.float32)
-    if k >= 1:
+    if k >= 1 and float(np.var(clean_emb)) >= 1e-12:
         pca = PCA(n_components=k, random_state=42)
-        out[:, :k] = pca.fit_transform(embeddings).astype(np.float32)
+        out[:, :k] = np.nan_to_num(pca.fit_transform(clean_emb), nan=0.0).astype(np.float32)
     return out
 
 
@@ -249,10 +309,17 @@ def evaluate_and_persist_epoch_space(
     save_full_snapshot: bool = False,
     normal_proxies: np.ndarray | None = None,
     defect_proxies: np.ndarray | None = None,
+    normal_proxy_alphas: np.ndarray | None = None,
+    normal_proxy_radii: np.ndarray | None = None,
 ) -> dict[str, Any]:
     """Evaluate the 128-D hypersphere space across `train`/`val`/`test` (6:2:2) and persist 2-tier Pure NumPy `.pkl` snapshots."""
-    norms = np.linalg.norm(embeddings_128d, axis=1, keepdims=True) + 1e-8
-    z_norm = (embeddings_128d / norms).astype(np.float32)
+    emb_clean = np.nan_to_num(
+        np.asarray(embeddings_128d, dtype=np.float32), nan=0.0, posinf=0.0, neginf=0.0
+    )
+    if emb_clean.ndim != 2 or emb_clean.shape[0] == 0:
+        raise ValueError("`embeddings_128d` must be a non-empty 2D array for space evaluation.")
+    norms = np.linalg.norm(emb_clean, axis=1, keepdims=True) + 1e-8
+    z_norm = (emb_clean / norms).astype(np.float32)
 
     labels_arr = np.asarray(labels, dtype=np.int64)
     defect_mask = np.asarray(is_defect, dtype=bool)
@@ -294,10 +361,21 @@ def evaluate_and_persist_epoch_space(
             dp_norms = np.linalg.norm(dp_arr, axis=1, keepdims=True) + 1e-8
             def_proxies_clean = (dp_arr / dp_norms).astype(np.float32)
 
-    # Multi-Proxy normality cosine similarity score s(x) = max_{m=1..M} <z(x), p_norm^(m)> in [-1, 1]
+    norm_alphas_clean: np.ndarray | None = None
+    if normal_proxy_alphas is not None:
+        norm_alphas_clean = np.asarray(normal_proxy_alphas, dtype=np.float32).reshape(-1)
+
+    norm_radii_clean: np.ndarray | None = None
+    if normal_proxy_radii is not None:
+        norm_radii_clean = np.asarray(normal_proxy_radii, dtype=np.float32).reshape(-1)
+
+    # Möbius-calibrated Multi-Proxy normality similarity score S_cal(x) in [-1, 1]
     if norm_proxies_clean is not None and norm_proxies_clean.shape[0] > 0:
-        sim_to_norm_proxies = z_norm @ norm_proxies_clean.T  # [N, M]
-        cosine_similarities = np.max(sim_to_norm_proxies, axis=1).astype(np.float32)
+        cosine_similarities = compute_calibrated_normal_similarities_np(
+            z_norm=z_norm,
+            norm_proxies=norm_proxies_clean,
+            proxy_alphas=norm_alphas_clean,
+        )
     else:
         cosine_similarities = (z_norm @ normal_prototype).astype(np.float32)
 
@@ -431,20 +509,22 @@ def evaluate_and_persist_epoch_space(
         "embeddings_128d": z_norm,
         "normal_prototype": normal_prototype,
         "normal_proxies": norm_proxies_clean,
+        "normal_proxy_alphas": norm_alphas_clean,
+        "normal_proxy_radii": norm_radii_clean,
         "defect_proxies": def_proxies_clean,
         "normal_proxies_umap_3d": norm_proxies_umap_3d,
         "defect_proxies_umap_3d": def_proxies_umap_3d,
         "cosine_similarities": cosine_similarities,
         "umap_3d": umap_3d,
-        "d_min_centroid": round(d_min_centroid, 5),
-        "d_min_boundary": round(d_min_boundary, 5),
-        "test_d_min_centroid": round(test_d_min_centroid, 5),
-        "test_d_min_boundary": round(test_d_min_boundary, 5),
-        "train_loss": round(float(train_loss), 5),
-        "val_loss": round(float(val_loss), 5),
+        "d_min_centroid": round(_finite_float(d_min_centroid), 5),
+        "d_min_boundary": round(_finite_float(d_min_boundary), 5),
+        "test_d_min_centroid": round(_finite_float(test_d_min_centroid), 5),
+        "test_d_min_boundary": round(_finite_float(test_d_min_boundary), 5),
+        "train_loss": round(_finite_float(train_loss), 5),
+        "val_loss": round(_finite_float(val_loss), 5),
         "loss_direction_feedback": str(loss_direction_feedback),
-        "effective_normal_ratio": round(float(effective_normal_ratio), 4),
-        "curriculum_progress": round(float(curriculum_progress), 4),
+        "effective_normal_ratio": round(_finite_float(effective_normal_ratio, 0.5), 4),
+        "curriculum_progress": round(_finite_float(curriculum_progress), 4),
         "effective_top_k": int(effective_top_k),
         "dispersion_metrics": dispersion_metrics,
         "dispersion_by_split": dispersion_by_split,

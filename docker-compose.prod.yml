@@ -6,6 +6,7 @@ services:
 
   api-backend:
     image: ${GCP_REGION:-us-central1}-docker.pkg.dev/${GCP_PROJECT_ID}/metric-learning/api-backend:${IMAGE_TAG:-latest}
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "18000", "--workers", "2"]
     volumes:
       - /mnt/disks/appdata:/app/data
 

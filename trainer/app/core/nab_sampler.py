@@ -22,7 +22,8 @@ def compute_class_balanced_weights(
                  where index `c - 1` corresponds to defect label_id `c`.
     """
     c_total = max(1, int(num_defect_classes))
-    beta_clamped = float(np.clip(beta, 0.5, 0.9999))
+    beta_val = float(beta) if np.isfinite(float(beta)) else 0.99
+    beta_clamped = float(np.clip(beta_val, 0.5, 0.9999))
     labels_arr = np.asarray(labels, dtype=np.int64)
 
     raw_weights = np.ones(c_total, dtype=np.float64)
@@ -59,6 +60,7 @@ class NormalAnomalyBalancedSampler:
         batch_size: int = 32,
         normal_ratio: float = 0.50,
         seed: int = 42,
+        normal_subclusters: np.ndarray | list[int] | None = None,
     ) -> None:
         self.labels = np.asarray(labels, dtype=np.int64)
         self.is_defect = np.asarray(is_defect, dtype=bool)
@@ -76,6 +78,18 @@ class NormalAnomalyBalancedSampler:
         if not normal_train:
             normal_train = np.where(~self.is_defect)[0].tolist()
         self.normal_indices: list[int] = [int(i) for i in normal_train]
+
+        # Optional latent normal sub-cluster grouping (M* >= 2) to prevent minority normal mode starvation
+        self.normal_by_subcluster: dict[int, list[int]] = {}
+        if normal_subclusters is not None:
+            sub_arr = np.asarray(normal_subclusters, dtype=np.int64).reshape(-1)
+            if len(sub_arr) == n_total:
+                for idx in self.normal_indices:
+                    sc_id = max(0, int(sub_arr[idx]))
+                    self.normal_by_subcluster.setdefault(sc_id, []).append(int(idx))
+        if not self.normal_by_subcluster and self.normal_indices:
+            self.normal_by_subcluster = {0: list(self.normal_indices)}
+        self.normal_subcluster_ids: list[int] = sorted(self.normal_by_subcluster.keys())
 
         defect_train = np.where(self.is_defect & train_mask)[0].tolist()
         if not defect_train:
@@ -111,10 +125,23 @@ class NormalAnomalyBalancedSampler:
         if not self.defect_class_ids:
             shuffled = list(self.normal_indices)
             self.rng.shuffle(shuffled)
-            return [
+            chunks = [
                 shuffled[i : i + self.batch_size]
                 for i in range(0, len(shuffled), self.batch_size)
             ]
+            if len(chunks) >= 2 and len(chunks[-1]) == 1 and len(shuffled) >= 2:
+                chunks[-1].append(int(shuffled[0]))
+            return chunks
+        if not self.normal_indices:
+            shuffled_def = list(self.defect_indices)
+            self.rng.shuffle(shuffled_def)
+            chunks_def = [
+                shuffled_def[i : i + self.batch_size]
+                for i in range(0, len(shuffled_def), self.batch_size)
+            ]
+            if len(chunks_def) >= 2 and len(chunks_def[-1]) == 1 and len(shuffled_def) >= 2:
+                chunks_def[-1].append(int(shuffled_def[0]))
+            return chunks_def
 
         n_norm_slots = max(2, int(round(self.batch_size * self.normal_ratio)))
         n_def_slots = max(2, self.batch_size - n_norm_slots)
@@ -134,9 +161,19 @@ class NormalAnomalyBalancedSampler:
         batches: list[list[int]] = []
         norm_cursor = 0
         num_modes = len(self.defect_class_ids)
+        num_norm_sub = len(self.normal_subcluster_ids)
+
+        sub_pools: dict[int, list[int]] = {}
+        sub_cursors: dict[int, int] = {}
+        if num_norm_sub >= 2:
+            for sc_id in self.normal_subcluster_ids:
+                p_list = list(self.normal_by_subcluster[sc_id])
+                self.rng.shuffle(p_list)
+                sub_pools[sc_id] = p_list
+                sub_cursors[sc_id] = 0
 
         for _ in range(num_batches):
-            # 1. Fill Normal slots (50% of batch)
+            # 1. Fill Normal slots (50% of batch), stratifying across normal subclusters when M* >= 2
             selected_normals: list[int] = []
             if valid_hard_normals:
                 n_hard = min(len(valid_hard_normals), max(1, int(n_norm_slots * 0.35)))
@@ -145,20 +182,48 @@ class NormalAnomalyBalancedSampler:
                 ).tolist()
                 selected_normals.extend(int(x) for x in hard_picks)
 
-            attempts = 0
-            while len(selected_normals) < n_norm_slots and norm_pool:
-                cand = int(norm_pool[norm_cursor % len(norm_pool)])
-                norm_cursor += 1
-                if norm_cursor % len(norm_pool) == 0:
-                    self.rng.shuffle(norm_pool)
-                if (
-                    cand in selected_normals
-                    and len(norm_pool) >= n_norm_slots
-                    and attempts < len(norm_pool)
-                ):
-                    attempts += 1
-                    continue
-                selected_normals.append(cand)
+            rem_norm = n_norm_slots - len(selected_normals)
+            if rem_norm > 0 and num_norm_sub >= 2:
+                sc_order = list(self.normal_subcluster_ids)
+                self.rng.shuffle(sc_order)
+                base_sc = rem_norm // num_norm_sub
+                rem_sc = rem_norm % num_norm_sub
+                for s_pos, sc_id in enumerate(sc_order):
+                    k_sc = base_sc + (1 if s_pos < rem_sc else 0)
+                    if k_sc <= 0:
+                        continue
+                    pool_sc = sub_pools[sc_id]
+                    picked_sc = 0
+                    sc_attempts = 0
+                    while picked_sc < k_sc and pool_sc:
+                        cand = int(pool_sc[sub_cursors[sc_id] % len(pool_sc)])
+                        sub_cursors[sc_id] += 1
+                        if sub_cursors[sc_id] % len(pool_sc) == 0:
+                            self.rng.shuffle(pool_sc)
+                        if (
+                            cand in selected_normals
+                            and len(pool_sc) >= k_sc
+                            and sc_attempts < len(pool_sc)
+                        ):
+                            sc_attempts += 1
+                            continue
+                        selected_normals.append(cand)
+                        picked_sc += 1
+            else:
+                attempts = 0
+                while len(selected_normals) < n_norm_slots and norm_pool:
+                    cand = int(norm_pool[norm_cursor % len(norm_pool)])
+                    norm_cursor += 1
+                    if norm_cursor % len(norm_pool) == 0:
+                        self.rng.shuffle(norm_pool)
+                    if (
+                        cand in selected_normals
+                        and len(norm_pool) >= n_norm_slots
+                        and attempts < len(norm_pool)
+                    ):
+                        attempts += 1
+                        continue
+                    selected_normals.append(cand)
 
             # 2. Fill Anomaly slots (50% of batch) stratified across defect classes
             selected_defects: list[int] = []

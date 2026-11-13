@@ -105,10 +105,32 @@ class BackendApiClient:
             resp.raise_for_status()
             return resp.json()
 
+    @staticmethod
+    def _raise_for_status_with_detail(resp: httpx.Response) -> None:
+        """Raise `httpx.HTTPStatusError` enriched with FastAPI's structured `detail` body."""
+        if resp.status_code < 400:
+            return
+        detail_msg = ""
+        try:
+            body = resp.json()
+            if isinstance(body, dict) and "detail" in body:
+                detail_msg = f" | detail={body['detail']}"
+            else:
+                detail_msg = f" | body={body}"
+        except Exception:
+            txt = (resp.text or "").strip()
+            if txt:
+                detail_msg = f" | body={txt[:500]}"
+        raise httpx.HTTPStatusError(
+            f"HTTP {resp.status_code} for {resp.request.method} {resp.request.url}{detail_msg}",
+            request=resp.request,
+            response=resp,
+        )
+
     def trigger_clustering(self, payload: dict[str, Any]) -> dict[str, Any]:
         with httpx.Client(timeout=30.0) as client:
             resp = client.post(f"{self.base_url}/api/v1/jobs/clustering", json=payload)
-            resp.raise_for_status()
+            self._raise_for_status_with_detail(resp)
             return resp.json()
 
     def get_clusters(self, dataset_name: str | None = None) -> dict[str, Any]:
@@ -170,7 +192,15 @@ class BackendApiClient:
     def trigger_training(self, payload: dict[str, Any]) -> dict[str, Any]:
         with httpx.Client(timeout=30.0) as client:
             resp = client.post(f"{self.base_url}/api/v1/jobs/training", json=payload)
-            resp.raise_for_status()
+            if (
+                resp.status_code in (422, 502)
+                and int(payload.get("num_normal_proxies", 1)) == 0
+                and "num_normal_proxies" in (resp.text or "")
+            ):
+                # Backward-compatibility fallback if an older un-restarted backend still enforces ge=1
+                compat_payload = {**payload, "num_normal_proxies": 1}
+                resp = client.post(f"{self.base_url}/api/v1/jobs/training", json=compat_payload)
+            self._raise_for_status_with_detail(resp)
             return resp.json()
 
     def get_job_status(self, job_id: str) -> dict[str, Any]:
@@ -212,7 +242,8 @@ class BackendApiClient:
         session_id: str | None = None,
         split: str = "test",
     ) -> dict[str, Any]:
-        params: dict[str, Any] = {"tau_sim": tau_sim, "split": split}
+        tau_clean = round(min(1.0, max(-1.0, float(tau_sim))), 4)
+        params: dict[str, Any] = {"tau_sim": tau_clean, "split": split}
         if session_id:
             params["session_id"] = session_id
         with httpx.Client(timeout=30.0) as client:
@@ -220,7 +251,7 @@ class BackendApiClient:
                 f"{self.base_url}/api/v1/evaluations/{epoch}",
                 params=params,
             )
-            resp.raise_for_status()
+            self._raise_for_status_with_detail(resp)
             return resp.json()
 
     def run_single_inference(
@@ -229,7 +260,8 @@ class BackendApiClient:
         tau_sim: float = 0.0,
         session_id: str | None = None,
     ) -> dict[str, Any]:
-        payload: dict[str, Any] = {"image_path": image_path, "tau_sim": tau_sim}
+        tau_clean = round(min(1.0, max(-1.0, float(tau_sim))), 4)
+        payload: dict[str, Any] = {"image_path": str(image_path), "tau_sim": tau_clean}
         if session_id:
             payload["session_id"] = session_id
         with httpx.Client(timeout=30.0) as client:
@@ -237,5 +269,5 @@ class BackendApiClient:
                 f"{self.base_url}/api/v1/inference",
                 json=payload,
             )
-            resp.raise_for_status()
+            self._raise_for_status_with_detail(resp)
             return resp.json()

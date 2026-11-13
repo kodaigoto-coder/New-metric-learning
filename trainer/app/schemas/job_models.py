@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class SyntheticDatasetRequest(BaseModel):
@@ -62,7 +62,12 @@ class TrainingJobRequest(BaseModel):
         le=0.80,
         description="Cosine margin delta for anomaly repulsion max(0, S(x, p_norm) - delta) (default 0.0 = orthogonal 90 deg).",
     )
-    num_normal_proxies: int = Field(default=4, ge=1, le=12)
+    num_normal_proxies: int = Field(
+        default=0,
+        ge=0,
+        le=12,
+        description="Number of Normal sub-center proxies M (0 = Auto M* via epsilon-covering & silhouette; 1..12 = manual override).",
+    )
     hard_anomaly_boost: float = Field(default=3.0, ge=1.0, le=20.0)
     class_balance_beta: float = Field(default=0.99, ge=0.50, le=0.9999)
     enable_boundary_aug: bool = Field(default=True)
@@ -77,6 +82,26 @@ class TrainingJobRequest(BaseModel):
     w_defect: float = Field(default=1.0, ge=0.1)
     w_aux: float = Field(default=0.2, ge=0.0)
     full_snapshot_interval: int = Field(default=4, ge=1)
+
+    @model_validator(mode="after")
+    def _normalize_coupled_bounds(self) -> TrainingJobRequest:
+        lo = min(float(self.mixup_alpha_min), float(self.mixup_alpha_max))
+        hi = max(float(self.mixup_alpha_min), float(self.mixup_alpha_max))
+        self.mixup_alpha_min = round(min(0.90, max(0.30, lo)), 4)
+        self.mixup_alpha_max = round(
+            min(0.95, max(0.35, self.mixup_alpha_min + 0.05, hi)), 4
+        )
+        if self.top_k_mode == "count":
+            if self.top_k_initial < 1.0:
+                self.top_k_initial = float(max(1, int(round(self.top_k_initial * 100.0))))
+            if self.top_k_final < 1.0:
+                self.top_k_final = float(max(1, int(round(self.top_k_final * 100.0))))
+        else:
+            if self.top_k_initial > 1.0:
+                self.top_k_initial = round(min(1.0, max(0.01, self.top_k_initial / 100.0)), 4)
+            if self.top_k_final > 1.0:
+                self.top_k_final = round(min(1.0, max(0.01, self.top_k_final / 100.0)), 4)
+        return self
 
 
 class SingleInferenceRequest(BaseModel):

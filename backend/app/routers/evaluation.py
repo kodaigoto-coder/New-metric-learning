@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import pickle
 import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,23 @@ from app.config import BackendConfig, sanitize_identifier
 from app.schemas.api_models import EvaluationMetricsResponse, InferenceProxyRequest
 
 router = APIRouter(prefix="/api/v1", tags=["space-evaluation"])
+
+
+def _load_pickle_snapshot(path: Path) -> dict[str, Any]:
+    """Load a `.pkl` snapshot safely with a brief retry against concurrent writer sync."""
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            with open(path, "rb") as f:
+                return pickle.load(f)
+        except (EOFError, pickle.UnpicklingError, OSError) as exc:
+            last_exc = exc
+            if attempt < 2:
+                time.sleep(0.05)
+    raise HTTPException(
+        status_code=503,
+        detail=f"Snapshot `{path.name}` is momentarily updating; please retry ({last_exc}).",
+    )
 
 
 def _ensure_6_2_2_splits(splits: list[str], label_names: list[str]) -> list[str]:
@@ -177,9 +195,13 @@ def _compute_dispersion_for_arrays(
         if not c_idx:
             continue
         c_vecs = z_norm[c_idx]
-        c_mean = np.mean(c_vecs, axis=0)
-        c_mean = c_mean / (np.linalg.norm(c_mean) + 1e-8)
-        c_cos_disp = float(np.mean(1.0 - (c_vecs @ c_mean)))
+        is_def_cls = bool(defect_mask[c_idx[0]])
+        if is_def_cls:
+            c_mean = np.mean(c_vecs, axis=0)
+            c_mean = c_mean / (np.linalg.norm(c_mean) + 1e-8)
+            c_cos_disp = float(np.mean(1.0 - (c_vecs @ c_mean)))
+        else:
+            c_cos_disp = float(np.mean(1.0 - sims[c_idx]))
         c_u = umap_arr[c_idx]
         c_u_center = np.mean(c_u, axis=0, keepdims=True)
         c_u_rad = float(np.sqrt(np.mean(np.sum((c_u - c_u_center) ** 2, axis=1))))
@@ -188,7 +210,7 @@ def _compute_dispersion_for_arrays(
             {
                 "label_name": str(cls_name),
                 "count": int(len(c_idx)),
-                "is_defect": bool(defect_mask[c_idx[0]]),
+                "is_defect": is_def_cls,
                 "intra_cosine_disp": round(c_cos_disp, 5),
                 "mean_dist_from_normal": round(c_norm_dist, 5),
                 "umap_radius_3d": round(c_u_rad, 4),
@@ -330,7 +352,7 @@ def _resolve_session_artifacts_dir(session_id: str | None = None) -> tuple[str, 
     if session_id:
         safe_id = sanitize_identifier(session_id, fallback="session_0001")
         s_dir = BackendConfig.session_dir(safe_id)
-        if list(s_dir.glob("epoch_*_light.pkl")):
+        if list(s_dir.glob("epoch_*_light.pkl")) or (s_dir / "session_meta.json").exists():
             return safe_id, s_dir
 
     # If no session_id or session_dir has no pkl yet, check root artifacts_dir first (for unit tests)
@@ -394,8 +416,7 @@ def list_available_evaluations(
             continue
         ep = int(m.group(1))
         full_file = target_dir / f"epoch_{ep:04d}_full.pkl"
-        with open(lf, "rb") as f:
-            snap = pickle.load(f)
+        snap = _load_pickle_snapshot(lf)
         label_names = [str(x) for x in snap.get("label_names", [])]
         splits = _ensure_6_2_2_splits([str(s) for s in snap.get("splits", [])], label_names)
         disp_by_split = _compute_dispersion_by_split_from_snapshot(snap, splits=splits)
@@ -486,8 +507,7 @@ def evaluate_epoch_at_threshold(
             detail=f"Snapshot for epoch {epoch} not found in session `{resolved_session_id}`.",
         )
 
-    with open(target_path, "rb") as f:
-        snap = pickle.load(f)
+    snap = _load_pickle_snapshot(target_path)
 
     sims = np.asarray(snap["cosine_similarities"], dtype=np.float32)
     is_defect = np.asarray(snap["is_defect"], dtype=bool)
@@ -689,9 +709,13 @@ def run_inference_proxy(req: InferenceProxyRequest) -> dict[str, Any]:
         with httpx.Client(timeout=30.0) as client:
             resp = client.post(url, json=req.model_dump())
             if resp.status_code >= 400:
+                try:
+                    err_detail = resp.json().get("detail", "Inference error")
+                except Exception:
+                    err_detail = (resp.text or "").strip() or "Inference error"
                 raise HTTPException(
                     status_code=resp.status_code,
-                    detail=resp.json().get("detail", "Inference error"),
+                    detail=err_detail,
                 )
             return resp.json()
     except HTTPException:

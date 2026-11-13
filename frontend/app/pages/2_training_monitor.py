@@ -306,7 +306,7 @@ with st.form("training_config_form"):
     session_label = r_memo_c1.text_input(
         "セッションメモ / 実験名（任意）",
         value="",
-        placeholder="例: 50:50バランス δ=0.0 M=1",
+        placeholder="例: 50:50バランス δ=0.0 M=Auto",
         help="学習開始時に自動で Session #0001, #0002 ... が採番されます。",
     )
     loss_type = r0c1.selectbox(
@@ -316,12 +316,12 @@ with st.form("training_config_form"):
         help="multi_proxy_anchor (推奨): 50:50 パワーバランスのコサイン求心力・斥力 Loss を使用します。",
     )
     num_normal_proxies = r0c2.number_input(
-        "良品プロキシ数 (M)",
-        min_value=1,
+        "良品プロキシ数 (M: 0=自動判定)",
+        min_value=0,
         max_value=12,
-        value=1,
+        value=0,
         step=1,
-        help="単一中心に強く凝集させる場合は M=1（推奨）、複数ロットの広がりを許容する場合は M=2〜4 に設定します。",
+        help="0（推奨デフォルト）: 学習用良品データの許容半径 ε とコサイン・シルエット係数から最適な M* を自動決定します（単峰なら M*=1、複数サブクラスタ時は M*=2〜6 に自動分割・Möbius半径較正）。1〜12 で手動固定も可能です。",
     )
     hard_anomaly_boost = r0c3.number_input(
         "Top-K 危険不良 相対優先度 (λ_hard)",
@@ -349,7 +349,7 @@ with st.form("training_config_form"):
 
     r2c1, r2c2, r2c3, r2c4 = st.columns(4)
     learning_rate = r2c1.number_input(
-        "学習率 (Learning Rate)", min_value=1e-5, max_value=5e-2, value=2e-3, format="%.4f"
+        "学習率 (Learning Rate)", min_value=1e-5, max_value=5e-2, value=2e-3, format="%.5f"
     )
     tau_sim = r2c2.slider(
         "評価基準コサイン類似度閾値 (τ_sim)",
@@ -366,18 +366,18 @@ with st.form("training_config_form"):
         "プロキシ直交補助重み (w_ortho)", min_value=0.0, max_value=2.0, value=0.2, step=0.05
     )
 
-    st.markdown("#### 3. 境界ハードサンプル合成（Defect Transfer ＆ 片方向 Anomalous Mixup / Phase 3）")
+    st.markdown("#### 3. 境界ハードサンプル合成（同座標 Zスコア欠陥転写 ＆ 同一サブクラスタ異常残差注入 / Phase 3）")
     b_c1, b_c2, b_c3, b_c4 = st.columns([1.5, 1.1, 1.1, 1.1])
     enable_boundary_aug = b_c1.checkbox(
-        "Defect Transfer ＆ 片方向 Anomalous Mixup を有効化",
+        "同座標 Zスコア欠陥転写 ＆ 異常残差注入 を有効化",
         value=True,
-        help="残差サリエンシーによる欠陥転写（Defect Transfer）と境界補間（Anomalous Mixup）を生成し、緩やかな重み（0.25x）で境界をガードします。",
+        help="非対称ワークの位置情報を保持したまま、同一サブクラスタ内の良品へ同座標（±2px）欠陥パッチ転写と純粋異常残差 Δ_def 注入を行い、正半球の浅い安全網（重み 0.15x）で境界をガードします（異位相間の線形Mixupは行いません）。",
     )
     mixup_alpha_min = b_c2.number_input(
-        "Anomalous Mixup 最小良品比率 (α_min)", min_value=0.30, max_value=0.85, value=0.55, step=0.05
+        "境界合成 最小強度係数 (α_min)", min_value=0.30, max_value=0.85, value=0.55, step=0.05
     )
     mixup_alpha_max = b_c3.number_input(
-        "Anomalous Mixup 最大良品比率 (α_max)", min_value=0.35, max_value=0.90, value=0.75, step=0.05
+        "境界合成 最大強度係数 (α_max)", min_value=0.35, max_value=0.90, value=0.75, step=0.05
     )
     class_balance_beta = b_c4.number_input(
         "Class-Balanced Weight β", min_value=0.80, max_value=0.9999, value=0.99, format="%.4f"
@@ -414,39 +414,60 @@ with st.form("training_config_form"):
     )
 
 if submitted:
-    job = client.trigger_training(
-        {
-            "dataset_name": active_dataset_name,
-            "session_label": session_label.strip() or None,
-            "loss_type": loss_type,
-            "backbone_name": backbone_name,
-            "pooling_type": pooling_type,
-            "pretrained": bool(use_pretrained),
-            "freeze_backbone": True,
-            "unfreeze_last_block": False,
-            "epochs": int(epochs),
-            "batch_size": int(batch_size),
-            "learning_rate": float(learning_rate),
-            "tau_sim": float(tau_sim),
-            "normal_loss_ratio": float(normal_loss_ratio),
-            "repel_delta": float(repel_delta),
-            "num_normal_proxies": int(num_normal_proxies),
-            "hard_anomaly_boost": float(hard_anomaly_boost),
-            "class_balance_beta": float(class_balance_beta),
-            "enable_boundary_aug": bool(enable_boundary_aug),
-            "mixup_alpha_min": float(mixup_alpha_min),
-            "mixup_alpha_max": float(mixup_alpha_max),
-            "nab_normal_ratio": float(nab_normal_ratio),
-            "top_k_mode": top_k_mode,
-            "top_k_initial": float(top_k_initial),
-            "top_k_final": float(top_k_final),
-            "gamma_initial": float(gamma_initial),
-            "gamma_final": float(gamma_final),
-            "w_defect": float(w_defect),
-            "w_aux": float(w_aux),
-            "full_snapshot_interval": max(1, int(epochs) // 2),
-        }
+    alpha_min_clean = round(min(0.90, max(0.30, float(mixup_alpha_min))), 4)
+    alpha_max_clean = round(
+        min(0.95, max(0.35, alpha_min_clean + 0.05, float(mixup_alpha_max))), 4
     )
+    epochs_clean = max(1, min(200, int(epochs)))
+    tk_init_clean = round(max(0.01, float(top_k_initial)), 4)
+    tk_final_clean = round(max(0.01, float(top_k_final)), 4)
+    if top_k_mode == "count":
+        if tk_init_clean < 1.0:
+            tk_init_clean = float(max(1, int(round(tk_init_clean * 100.0))))
+        if tk_final_clean < 1.0:
+            tk_final_clean = float(max(1, int(round(tk_final_clean * 100.0))))
+    else:
+        if tk_init_clean > 1.0:
+            tk_init_clean = round(min(1.0, max(0.01, tk_init_clean / 100.0)), 4)
+        if tk_final_clean > 1.0:
+            tk_final_clean = round(min(1.0, max(0.01, tk_final_clean / 100.0)), 4)
+    try:
+        job = client.trigger_training(
+            {
+                "dataset_name": active_dataset_name,
+                "session_label": session_label.strip() or None,
+                "loss_type": loss_type,
+                "backbone_name": backbone_name,
+                "pooling_type": pooling_type,
+                "pretrained": bool(use_pretrained),
+                "freeze_backbone": True,
+                "unfreeze_last_block": False,
+                "epochs": epochs_clean,
+                "batch_size": max(4, min(256, int(batch_size))),
+                "learning_rate": round(min(1.0, max(1e-6, float(learning_rate))), 6),
+                "tau_sim": round(min(1.0, max(-1.0, float(tau_sim))), 4),
+                "normal_loss_ratio": round(min(0.95, max(0.05, float(normal_loss_ratio))), 4),
+                "repel_delta": round(min(0.80, max(-0.80, float(repel_delta))), 4),
+                "num_normal_proxies": max(0, min(12, int(num_normal_proxies))),
+                "hard_anomaly_boost": round(min(20.0, max(1.0, float(hard_anomaly_boost))), 4),
+                "class_balance_beta": round(min(0.9999, max(0.50, float(class_balance_beta))), 6),
+                "enable_boundary_aug": bool(enable_boundary_aug),
+                "mixup_alpha_min": alpha_min_clean,
+                "mixup_alpha_max": alpha_max_clean,
+                "nab_normal_ratio": round(min(0.75, max(0.25, float(nab_normal_ratio))), 4),
+                "top_k_mode": top_k_mode,
+                "top_k_initial": tk_init_clean,
+                "top_k_final": tk_final_clean,
+                "gamma_initial": round(max(0.0, float(gamma_initial)), 4),
+                "gamma_final": round(max(0.0, float(gamma_final)), 4),
+                "w_defect": round(max(0.1, float(w_defect)), 4),
+                "w_aux": round(max(0.0, float(w_aux)), 4),
+                "full_snapshot_interval": max(1, epochs_clean // 2),
+            }
+        )
+    except Exception as exc:
+        st.error(f"学習ジョブの起動に失敗しました: {exc}")
+        st.stop()
     job_id = job["job_id"]
     assigned_session_id = job.get("session_id", "")
     assigned_session_num = job.get("session_number")
@@ -461,9 +482,23 @@ if submitted:
     last_rendered_len = 0
     render_seq = 0
 
+    poll_failures = 0
+    status: dict[str, Any] = {"status": "running"}
     while True:
-        status = client.get_job_status(job_id)
-        prog.progress(float(status.get("progress", 0.0)), text=status.get("message", ""))
+        try:
+            status = client.get_job_status(job_id)
+            poll_failures = 0
+        except Exception as exc:
+            poll_failures += 1
+            if poll_failures >= 6:
+                st.error(f"ジョブ状態の取得中に通信エラーが継続しました: {exc}")
+                st.stop()
+            time.sleep(1.0)
+            continue
+        prog.progress(
+            min(1.0, max(0.0, float(status.get("progress", 0.0)))),
+            text=status.get("message", ""),
+        )
         history = status.get("history", [])
         is_done = status["status"] in ("completed", "failed")
 

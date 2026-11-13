@@ -41,16 +41,16 @@ class AsymmetricMultiSimilarityLoss(nn.Module):
         local_pos_k: int = 3,
     ) -> None:
         super().__init__()
-        self.alpha = alpha
-        self.beta = beta
-        self.lambda_pos = lambda_pos
-        self.lambda_primary = lambda_primary
-        self.lambda_aux = lambda_aux
-        self.epsilon = epsilon
-        self.w_defect = w_defect
-        self.w_aux = w_aux
-        self.beta_repel = beta_repel
-        self.local_pos_k = local_pos_k
+        self.alpha = max(1e-3, float(alpha))
+        self.beta = max(1e-3, float(beta))
+        self.lambda_pos = float(lambda_pos)
+        self.lambda_primary = float(lambda_primary)
+        self.lambda_aux = float(lambda_aux)
+        self.epsilon = float(epsilon)
+        self.w_defect = max(1e-4, float(w_defect))
+        self.w_aux = max(0.0, float(w_aux))
+        self.beta_repel = max(1e-3, float(beta_repel))
+        self.local_pos_k = max(1, int(local_pos_k))
 
     def forward(
         self,
@@ -63,7 +63,7 @@ class AsymmetricMultiSimilarityLoss(nn.Module):
         top_k_value: float = 20.0,
     ) -> tuple[torch.Tensor, dict[str, float]]:
         """Compute `L_total = L_MS + gamma(t) * L_repel` and diagnostic metrics."""
-        z = F.normalize(embeddings, p=2, dim=-1)
+        z = F.normalize(embeddings, p=2, dim=-1, eps=1e-6)
         batch_size = z.shape[0]
         if batch_size < 2:
             zero = z.sum() * 0.0
@@ -75,7 +75,7 @@ class AsymmetricMultiSimilarityLoss(nn.Module):
             }
 
         sim_mat = z @ z.T  # [B, B] in [-1, 1]
-        labels = labels.view(-1)
+        labels = labels.to(device=z.device, dtype=torch.long).reshape(-1)
         is_defect = labels > 0
 
         loss_ms_terms: list[torch.Tensor] = []
@@ -162,11 +162,11 @@ class AsymmetricMultiSimilarityLoss(nn.Module):
         defect_anchors = z[is_defect]
         normal_anchors = z[~is_defect]
         if normal_anchors.shape[0] > 0:
-            batch_proto = F.normalize(normal_anchors.mean(dim=0), p=2, dim=-1)
+            batch_proto = F.normalize(normal_anchors.mean(dim=0), p=2, dim=-1, eps=1e-6)
             norm_proto_sim = normal_anchors @ batch_proto
             loss_proto_norm = F.relu(0.70 - norm_proto_sim).mean()
             if defect_anchors.shape[0] > 0:
-                def_proto_sim = defect_anchors @ batch_proto
+                def_proto_sim = defect_anchors @ batch_proto.detach()
                 loss_proto_def = F.relu(def_proto_sim - (-0.25)).mean() * self.w_defect
                 loss_ms = loss_ms + loss_proto_norm + loss_proto_def
             else:
